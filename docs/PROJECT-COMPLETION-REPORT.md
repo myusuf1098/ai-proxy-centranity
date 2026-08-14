@@ -23,6 +23,7 @@ All 12 Phases from the project roadmap ([docs/specs/02-ROADMAP.md](docs/specs/02
 | **Phase 9** | Deployment & Operations | PR #9 | Docker Compose, multi-stage builds, operational runbooks (`docs/operations/`) | **COMPLETE** |
 | **Phase 10** | Hardening & Benchmarks | PR #10 | Security hardening tests, microbenchmarks (Policy: 46ns, Route: 1µs) | **COMPLETE** |
 | **Phase 11** | Final Polish & Clean Handover | PR #11 | Docs relocated to `docs/specs/`, enterprise `README.md`, `docs/user-guide.md` | **COMPLETE** |
+| **Phase 12** | Shared Network Integration | PR #12 | Seamless Docker DNS resolution to `rys-centranity_default` | **COMPLETE** |
 
 ---
 

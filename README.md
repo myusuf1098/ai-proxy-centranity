@@ -39,8 +39,8 @@
                                   ├──────────────────────────────┐
                                   ▼                              ▼
                  ┌────────────────────────────────┐   ┌──────────────────────┐
-                 │ 9Router Upstream (:20128)      │   │ PostgreSQL 16 & Redis│
-                 │ (HaProxy / Model Aggregator)   │   │ (State & Limiter)    │
+                 │ 9Router Upstream (Shared Net)  │   │ PostgreSQL 16 & Redis│
+                 │ (rys-centranity_default)       │   │ (State & Limiter)    │
                  └────────────────────────────────┘   └──────────────────────┘
 ```
 
@@ -92,14 +92,11 @@ make build
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `PG_SERVER_PORT` | `8088` | HTTP listening port for Gateway API |
-| `PG_NINEROUTER_BASE_URL` | `http://127.0.0.1:20128` | Upstream 9Router service endpoint |
+| `PG_NINEROUTER_URL` | `http://ninerouter:20128` | Upstream 9Router service endpoint (Docker DNS) |
 | `PG_NINEROUTER_API_KEY` | - | 9Router upstream authorization key |
-| `PG_DATABASE_HOST` | `127.0.0.1` | PostgreSQL database host |
-| `PG_DATABASE_PORT` | `5432` | PostgreSQL database port |
-| `PG_DATABASE_USER` | `proxygateway` | PostgreSQL username |
-| `PG_DATABASE_PASSWORD` | `secret` | PostgreSQL password |
-| `PG_REDIS_HOST` | `127.0.0.1` | Redis host for rate limiting |
-| `PG_REDIS_PORT` | `6379` | Redis port |
+| `PG_DATABASE_URL` | `postgres://user:pass@postgres:5432/db` | PostgreSQL connection string |
+| `PG_REDIS_URL` | `redis://redis:6379/0` | Redis connection string for rate limiting |
+| `PG_ADMIN_TOKEN` | - | Bearer token for Management API access |
 
 ---
 
