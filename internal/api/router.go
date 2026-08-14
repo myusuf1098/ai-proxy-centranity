@@ -21,11 +21,22 @@ func NewRouterWithAdapter(cfg *config.Config, healthHandler *health.Handler, ada
 	if adapter != nil {
 		dpHandler = NewDataPlaneHandler(adapter, logger)
 	}
-	return NewRouterWithDataPlane(cfg, healthHandler, dpHandler, logger)
+	return NewRouterWithManagement(cfg, healthHandler, dpHandler, nil, logger)
 }
 
-// NewRouterWithDataPlane initializes routes with DataPlaneHandler and optional auth
+// NewRouterWithDataPlane initializes routes with DataPlaneHandler
 func NewRouterWithDataPlane(cfg *config.Config, healthHandler *health.Handler, dpHandler *DataPlaneHandler, logger *slog.Logger) http.Handler {
+	return NewRouterWithManagement(cfg, healthHandler, dpHandler, nil, logger)
+}
+
+// NewRouterWithManagement initializes routes with both DataPlaneHandler and ManagementHandler
+func NewRouterWithManagement(
+	cfg *config.Config,
+	healthHandler *health.Handler,
+	dpHandler *DataPlaneHandler,
+	mgmtHandler *ManagementHandler,
+	logger *slog.Logger,
+) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health routes
@@ -34,7 +45,7 @@ func NewRouterWithDataPlane(cfg *config.Config, healthHandler *health.Handler, d
 		mux.HandleFunc("GET /health/ready", healthHandler.Ready)
 	}
 
-	// Data Plane routes
+	// Data Plane routes (/v1/*)
 	if dpHandler != nil {
 		var listModelsHandler http.Handler = http.HandlerFunc(dpHandler.ListModels)
 		var chatHandler http.Handler = http.HandlerFunc(dpHandler.ChatCompletions)
@@ -46,6 +57,13 @@ func NewRouterWithDataPlane(cfg *config.Config, healthHandler *health.Handler, d
 
 		mux.Handle("GET /v1/models", listModelsHandler)
 		mux.Handle("POST /v1/chat/completions", chatHandler)
+	}
+
+	// Control Plane / Management API routes (/api/v1/*)
+	if mgmtHandler != nil {
+		mux.HandleFunc("GET /api/v1/system", mgmtHandler.GetSystem)
+		mux.HandleFunc("GET /api/v1/overview", mgmtHandler.GetOverview)
+		mux.HandleFunc("GET /api/v1/proxies", mgmtHandler.GetProxies)
 	}
 
 	// Root info endpoint

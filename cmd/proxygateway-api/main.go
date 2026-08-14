@@ -12,9 +12,14 @@ import (
 	"time"
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/api"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/limiter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/proxy"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/routing"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/store"
 )
 
@@ -76,11 +81,35 @@ func main() {
 	})
 	healthCheckers = append(healthCheckers, nineRouterAdapter)
 
-	// 5. Setup Health Handlers & Router
-	healthHandler := health.NewHandler(healthCheckers...)
-	router := api.NewRouterWithAdapter(cfg, healthHandler, nineRouterAdapter, logger)
+	// 5. Initialize Core Engines & Stores
+	keyStore := auth.NewMemoryKeyStore()
+	policyEngine := policy.NewEngine()
+	rateLimiter := limiter.NewMemoryLimiter()
+	routeEngine := routing.NewEngine(nil)
+	proxyStore := proxy.NewMemoryStore()
 
-	// 6. Start Server
+	dpHandler := api.NewDataPlaneHandlerWithRouting(
+		nineRouterAdapter,
+		keyStore,
+		policyEngine,
+		rateLimiter,
+		routeEngine,
+		logger,
+	)
+
+	mgmtHandler := api.NewManagementHandler(
+		nineRouterAdapter,
+		keyStore,
+		routeEngine,
+		proxyStore,
+		logger,
+	)
+
+	// 6. Setup Health Handlers & Router
+	healthHandler := health.NewHandler(healthCheckers...)
+	router := api.NewRouterWithManagement(cfg, healthHandler, dpHandler, mgmtHandler, logger)
+
+	// 7. Start Server
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
 		Handler:      router,
