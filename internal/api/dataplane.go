@@ -228,27 +228,62 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// 4. Forward to 9Router adapter
-	resp, err := h.adapter.ForwardChatCompletion(r.Context(), bytes.NewReader(bodyBytes), r.Header)
-	if err != nil {
-		if h.routingEngine != nil {
-			h.routingEngine.RecordResult(targetModel, false)
+	// 4. Forward to 9Router adapter, with fallback on upstream failure
+	targets := []string{targetModel}
+	if decision != nil && len(decision.FallbackChain) > 0 {
+		targets = append(targets, decision.FallbackChain...)
+	}
+
+	var lastResp *http.Response
+	var lastErr error
+	forwarded := false
+
+	for _, t := range targets {
+		// Rewrite model per target
+		payloadMap["model"] = t
+		if updatedBytes, err := json.Marshal(payloadMap); err == nil {
+			bodyBytes = updatedBytes
 		}
-		h.logger.Error("upstream forward failed", slog.Any("error", err), slog.String("request_id", GetRequestID(r.Context())))
-		h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+err.Error(), "upstream_error", "upstream_unavailable")
+
+		resp, err := h.adapter.ForwardChatCompletion(r.Context(), bytes.NewReader(bodyBytes), r.Header)
+		if err != nil {
+			if h.routingEngine != nil {
+				h.routingEngine.RecordResult(t, false)
+			}
+			h.logger.Warn("upstream forward failed, trying fallback", slog.Any("error", err), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			if h.routingEngine != nil {
+				h.routingEngine.RecordResult(t, false)
+			}
+			h.logger.Warn("upstream 5xx, trying fallback", slog.Int("status", resp.StatusCode), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
+			resp.Body.Close()
+			lastErr = fmt.Errorf("upstream returned %d for %s", resp.StatusCode, t)
+			continue
+		}
+
+		if h.routingEngine != nil {
+			h.routingEngine.RecordResult(t, true)
+		}
+		lastResp = resp
+		forwarded = true
+		break
+	}
+
+	if !forwarded {
+		if lastErr != nil {
+			h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+lastErr.Error(), "upstream_error", "upstream_unavailable")
+		} else {
+			h.writeError(w, http.StatusBadGateway, "upstream gateway error", "upstream_error", "upstream_unavailable")
+		}
 		return
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 500 {
-		if h.routingEngine != nil {
-			h.routingEngine.RecordResult(targetModel, false)
-		}
-	} else {
-		if h.routingEngine != nil {
-			h.routingEngine.RecordResult(targetModel, true)
-		}
-	}
+	resp := lastResp
+	defer resp.Body.Close()
 
 	contentType := resp.Header.Get("Content-Type")
 	isStream := parsed.Stream || strings.Contains(contentType, "text/event-stream")
