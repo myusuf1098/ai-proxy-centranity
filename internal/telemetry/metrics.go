@@ -97,7 +97,11 @@ func (m *Metrics) Middleware() func(http.Handler) http.Handler {
 			statusStr := fmt.Sprintf("%d", rec.statusCode)
 
 			m.RequestsTotal.WithLabelValues(r.Method, r.URL.Path, statusStr).Inc()
-			m.RequestDuration.WithLabelValues(r.URL.Path, "").Observe(duration)
+			// Chat handler owns the duration observe (model-labeled); skip the
+			// blank-model observation here so each chat request is counted once.
+			if r.URL.Path != "/v1/chat/completions" {
+				m.RequestDuration.WithLabelValues(r.URL.Path, "").Observe(duration)
+			}
 		})
 	}
 }

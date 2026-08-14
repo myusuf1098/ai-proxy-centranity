@@ -85,6 +85,11 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches → PR �
 ### Feature Completion (Plan 2)
 - Upstream error codes aligned with 9Router compatibility matrix: 401 → `UPSTREAM_AUTH_ERROR`, 429 → `UPSTREAM_RATE_LIMIT`, 5xx → `UPSTREAM_UNAVAILABLE`, transport error → `UPSTREAM_UNREACHABLE`
 - Chat request validates `messages` field present (400 `missing_messages`)
+- Fallback execution on upstream 5xx: routing fallback chain tried when primary returns 5xx/401/429 or transport-errors, 502 only after all targets fail
+- RPS limiter: `MemoryLimiter.AllowRPS` sliding-window requests-per-second alongside RPM
+- Token quota package (`internal/quota`): daily + monthly token enforcement with `X-RateLimit-Quota-*` headers
+- Global deny policy: `PolicyEngine.SetGlobalDeny` with precedence over per-key allow
+- Prometheus counters wired: `pg_tokens_total` (per key/model/type), `pg_upstream_errors_total` (per provider/code), duration `model` label on successful chat requests
 
 ### Docsfeat(9router): align upstream error codes with compatibility matrix)
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)

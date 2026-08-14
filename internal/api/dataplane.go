@@ -113,7 +113,7 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 	models, err := h.adapter.ListModels(ctx)
 	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "failed to retrieve upstream models: "+err.Error(), "upstream_error", "upstream_unavailable")
+		h.writeError(w, http.StatusBadGateway, "failed to retrieve upstream models: "+err.Error(), "upstream_error", ninerouter.ErrUpstreamUnavail)
 		return
 	}
 
@@ -279,11 +279,15 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 			}
 			h.logger.Warn("upstream forward failed, trying fallback", slog.Any("error", err), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
 			lastErr = err
+			lastStatusCode = 0 // transport error: no HTTP status, must not shadow a later mapped code
 			continue
 		}
 
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusTooManyRequests {
 			lastStatusCode = resp.StatusCode
+			if h.metrics != nil {
+				h.metrics.UpstreamErrors.WithLabelValues("9router", upstreamErrorCode(resp.StatusCode)).Inc()
+			}
 			if h.routingEngine != nil {
 				h.routingEngine.RecordResult(t, false)
 			}
@@ -320,7 +324,7 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 
 	// Record token usage + latency for the model that actually succeeded
 	if h.metrics != nil {
-		h.metrics.TokensTotal.WithLabelValues(keyIDOrUnknown(r), successModel, "output").Add(float64(estimateTokens(parsed.Messages)))
+		h.metrics.TokensTotal.WithLabelValues(keyIDOrUnknown(r), successModel, "input").Add(float64(estimateTokens(parsed.Messages)))
 		h.metrics.RequestDuration.WithLabelValues("/v1/chat/completions", successModel).Observe(time.Since(startTime).Seconds())
 	}
 
