@@ -78,7 +78,7 @@ func main() {
 
 	// 5. Setup Health Handlers & Router
 	healthHandler := health.NewHandler(healthCheckers...)
-	router := api.NewRouter(cfg, healthHandler, logger)
+	router := api.NewRouterWithAdapter(cfg, healthHandler, nineRouterAdapter, logger)
 
 	// 6. Start Server
 	srv := &http.Server{

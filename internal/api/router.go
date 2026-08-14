@@ -6,16 +6,29 @@ import (
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 )
 
-// NewRouter initializes and wires up HTTP routes with standard middleware
+// NewRouter initializes HTTP routes without an active upstream adapter (fallback)
 func NewRouter(cfg *config.Config, healthHandler *health.Handler, logger *slog.Logger) http.Handler {
+	return NewRouterWithAdapter(cfg, healthHandler, nil, logger)
+}
+
+// NewRouterWithAdapter initializes and wires up HTTP routes with standard middleware and 9Router adapter
+func NewRouterWithAdapter(cfg *config.Config, healthHandler *health.Handler, adapter ninerouter.NineRouterPort, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health routes
 	if healthHandler != nil {
 		mux.HandleFunc("GET /health/live", healthHandler.Live)
 		mux.HandleFunc("GET /health/ready", healthHandler.Ready)
+	}
+
+	// Data Plane routes
+	if adapter != nil {
+		dpHandler := NewDataPlaneHandler(adapter, logger)
+		mux.HandleFunc("GET /v1/models", dpHandler.ListModels)
+		mux.HandleFunc("POST /v1/chat/completions", dpHandler.ChatCompletions)
 	}
 
 	// Root info endpoint
