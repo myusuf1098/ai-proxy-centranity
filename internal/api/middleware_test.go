@@ -77,12 +77,20 @@ func TestManagementRoutesRequireAdminToken(t *testing.T) {
 	h := health.NewHandler()
 	router := api.NewRouterWithManagement(cfg, h, nil, &api.ManagementHandler{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	for _, path := range []string{"/api/v1/system", "/api/v1/overview", "/api/v1/proxies"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+	routes := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/system"},
+		{http.MethodGet, "/api/v1/overview"},
+		{http.MethodGet, "/api/v1/proxies"},
+		{http.MethodPost, "/api/v1/proxies"},
+		{http.MethodPut, "/api/v1/proxies/p1"},
+		{http.MethodDelete, "/api/v1/proxies/p1"},
+	}
+	for _, rt := range routes {
+		req := httptest.NewRequest(rt.method, rt.path, nil)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s: got %d, want 401", path, rec.Code)
+			t.Errorf("%s %s: got %d, want 401", rt.method, rt.path, rec.Code)
 		}
 	}
 }

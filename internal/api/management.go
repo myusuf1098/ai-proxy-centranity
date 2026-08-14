@@ -149,7 +149,7 @@ type ProxyRequest struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Enabled  bool   `json:"enabled"`
+	Enabled  *bool  `json:"enabled"`
 }
 
 // CreateProxy handles POST /api/v1/proxies
@@ -159,7 +159,7 @@ func (h *ManagementHandler) CreateProxy(w http.ResponseWriter, r *http.Request) 
 		h.writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if req.Type == "" || req.Host == "" || req.Port <= 0 {
+	if req.Name == "" || req.Type == "" || req.Host == "" || req.Port <= 0 {
 		h.writeJSONError(w, http.StatusBadRequest, "name, type, host, port required")
 		return
 	}
@@ -175,7 +175,7 @@ func (h *ManagementHandler) CreateProxy(w http.ResponseWriter, r *http.Request) 
 		Port:      req.Port,
 		Username:  req.Username,
 		Password:  req.Password,
-		Enabled:   req.Enabled,
+		Enabled:   req.Enabled == nil || *req.Enabled, // default enabled on create
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -193,7 +193,7 @@ func (h *ManagementHandler) CreateProxy(w http.ResponseWriter, r *http.Request) 
 func (h *ManagementHandler) GetProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if h.proxyStore == nil {
-		h.writeJSONError(w, http.StatusNotFound, "proxy store unavailable")
+		h.writeJSONError(w, http.StatusInternalServerError, "proxy store unavailable")
 		return
 	}
 	p, err := h.proxyStore.Get(r.Context(), id)
@@ -210,7 +210,7 @@ func (h *ManagementHandler) GetProxy(w http.ResponseWriter, r *http.Request) {
 func (h *ManagementHandler) UpdateProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if h.proxyStore == nil {
-		h.writeJSONError(w, http.StatusNotFound, "proxy store unavailable")
+		h.writeJSONError(w, http.StatusInternalServerError, "proxy store unavailable")
 		return
 	}
 	existing, err := h.proxyStore.Get(r.Context(), id)
@@ -242,7 +242,9 @@ func (h *ManagementHandler) UpdateProxy(w http.ResponseWriter, r *http.Request) 
 	if req.Password != "" {
 		existing.Password = req.Password
 	}
-	existing.Enabled = req.Enabled
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := h.proxyStore.Save(r.Context(), existing); err != nil {
 		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -258,7 +260,7 @@ func (h *ManagementHandler) UpdateProxy(w http.ResponseWriter, r *http.Request) 
 func (h *ManagementHandler) DeleteProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if h.proxyStore == nil {
-		h.writeJSONError(w, http.StatusNotFound, "proxy store unavailable")
+		h.writeJSONError(w, http.StatusInternalServerError, "proxy store unavailable")
 		return
 	}
 	if err := h.proxyStore.Delete(r.Context(), id); err != nil {

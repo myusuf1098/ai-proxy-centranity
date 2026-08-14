@@ -138,6 +138,9 @@ func TestProxyCRUD(t *testing.T) {
 	if rec4.Code != http.StatusOK {
 		t.Fatalf("update: got %d, want 200", rec4.Code)
 	}
+	if strings.Contains(rec4.Body.String(), "secret-user-1") || strings.Contains(rec4.Body.String(), "secret-pass-1") {
+		t.Fatal("credentials leaked in update response")
+	}
 	var updated proxy.Profile
 	if err := json.Unmarshal(rec4.Body.Bytes(), &updated); err != nil {
 		t.Fatalf("decode update response: %v", err)
@@ -147,6 +150,9 @@ func TestProxyCRUD(t *testing.T) {
 	}
 	if updated.Host != "proxy.example" {
 		t.Fatalf("update clobbered untouched field host: %+v", updated)
+	}
+	if !updated.Enabled {
+		t.Fatalf("update zero-filled Enabled: %+v", updated)
 	}
 
 	// Delete
