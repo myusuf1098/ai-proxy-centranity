@@ -67,8 +67,14 @@ func TestDeployment_HasTUIComposeService(t *testing.T) {
 	if !strings.Contains(s, "Dockerfile.tui") {
 		t.Fatal("proxygateway-tui service must use Dockerfile.tui")
 	}
-	if strings.Contains(s, `"8089:8089"`) {
-		t.Fatal("TUI must not publish a port")
+	if start := strings.Index(s, "proxygateway-tui:"); start != -1 {
+		block := s[start:]
+		if end := strings.Index(block, "\nnetworks:"); end != -1 {
+			block = block[:end]
+		}
+		if strings.Contains(block, "ports:") {
+			t.Fatal("proxygateway-tui service must not publish a port")
+		}
 	}
 }
 
