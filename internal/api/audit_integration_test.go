@@ -69,3 +69,34 @@ func TestAuditAuthFailureEmitted(t *testing.T) {
 		t.Error("no AUTH_FAILURE audit event emitted")
 	}
 }
+
+func TestManagementAuthFailureAudited(t *testing.T) {
+	auditStore := audit.NewMemoryStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	mgmt := NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), nil, logger)
+	mgmt.SetAuditStore(auditStore)
+
+	cfg, _ := config.Load()
+	cfg.Admin.ManagementToken = "test-admin-token"
+	router := NewRouterWithManagement(cfg, health.NewHandler(), nil, mgmt, logger)
+
+	// No admin token -> 401 at AdminAuthMiddleware -> AUTH_FAILURE at router level
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", rec.Code)
+	}
+	events, _ := auditStore.List(context.Background())
+	found := false
+	for _, e := range events {
+		if e.EventType == audit.EventAuthFailure && e.Target == "/api/v1/system" && e.Actor == "unknown" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no AUTH_FAILURE audit event emitted for management route")
+	}
+}

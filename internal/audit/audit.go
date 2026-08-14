@@ -34,16 +34,30 @@ type Store interface {
 	List(ctx context.Context) ([]Event, error)
 }
 
-// MemoryStore provides in-memory thread-safe audit log storage with automatic redaction
+// defaultMaxEvents is the default cap on retained in-memory audit events
+const defaultMaxEvents = 10_000
+
+// MemoryStore provides in-memory thread-safe audit log storage with automatic redaction.
+// Events beyond maxEvents are dropped oldest-first to bound memory growth.
 type MemoryStore struct {
-	mu     sync.RWMutex
-	events []Event
+	mu        sync.RWMutex
+	events    []Event
+	maxEvents int
 }
 
-// NewMemoryStore creates a new MemoryStore
+// NewMemoryStore creates a new MemoryStore with the default event cap
 func NewMemoryStore() *MemoryStore {
+	return NewMemoryStoreWithLimit(defaultMaxEvents)
+}
+
+// NewMemoryStoreWithLimit creates a new MemoryStore retaining at most maxEvents events
+func NewMemoryStoreWithLimit(maxEvents int) *MemoryStore {
+	if maxEvents <= 0 {
+		maxEvents = defaultMaxEvents
+	}
 	return &MemoryStore{
-		events: make([]Event, 0, 1000),
+		events:    make([]Event, 0, maxEvents),
+		maxEvents: maxEvents,
 	}
 }
 
@@ -65,6 +79,10 @@ func (s *MemoryStore) Log(ctx context.Context, event Event) error {
 	event.Metadata = sanitizedMetadata
 
 	s.events = append(s.events, event)
+	if len(s.events) > s.maxEvents {
+		// Drop the oldest event to enforce the cap (ring-buffer behavior)
+		s.events = append(s.events[:0], s.events[len(s.events)-s.maxEvents:]...)
+	}
 	return nil
 }
 
