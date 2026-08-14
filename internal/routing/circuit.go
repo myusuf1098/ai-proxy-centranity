@@ -122,7 +122,7 @@ func (cb *CircuitBreaker) GetState(target string) CircuitState {
 		return CircuitClosed
 	}
 
-	if ts.state == CircuitOpen && time.Now().Sub(ts.lastFailureTime) >= cb.cfg.CooldownDuration {
+	if ts.state == CircuitOpen && time.Since(ts.lastFailureTime) >= cb.cfg.CooldownDuration {
 		return CircuitHalfOpen
 	}
 
