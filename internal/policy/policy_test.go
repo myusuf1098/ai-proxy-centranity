@@ -70,3 +70,27 @@ func TestGlobalDenyOverridesPerKeyAllow(t *testing.T) {
 		t.Fatalf("cc-sonnet should be allowed, got %s", d2.Reason)
 	}
 }
+
+func TestGlobalDenyProvider(t *testing.T) {
+	e := policy.NewEngine()
+	e.SetGlobalDeny(nil, []string{"openai"})
+
+	key := &auth.APIKey{
+		ID:               "k1",
+		AllowedProviders: []string{"openai", "anthropic"},
+		DeniedProviders:  []string{},
+	}
+
+	d := e.EvaluateProvider(context.Background(), key, "openai")
+	if d.Allowed {
+		t.Fatalf("global provider deny should block openai, got %s", d.Reason)
+	}
+	if d.Reason != "GLOBAL_PROVIDER_DENIED" {
+		t.Fatalf("expected reason GLOBAL_PROVIDER_DENIED, got %s", d.Reason)
+	}
+
+	d2 := e.EvaluateProvider(context.Background(), key, "anthropic")
+	if !d2.Allowed {
+		t.Fatalf("anthropic should be allowed, got %s", d2.Reason)
+	}
+}

@@ -34,7 +34,7 @@ func NewEngine() *Engine {
 func (e *Engine) SetGlobalDeny(models, providers []string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.globalDeny = globalDeny{models: models, providers: providers}
+	e.globalDeny = globalDeny{models: append([]string(nil), models...), providers: append([]string(nil), providers...)}
 }
 
 // EvaluateModel checks if the authenticated key is authorized to access the requested model
