@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -83,7 +84,7 @@ func Load() (*Config, error) {
 		},
 		Admin: AdminConfig{
 			ManagementToken: getEnvString("PG_ADMIN_TOKEN", ""),
-			AllowedOrigins:  []string{"*"},
+			AllowedOrigins:  GetEnvSlice("PG_ADMIN_ALLOWED_ORIGINS", []string{"*"}),
 		},
 	}
 
@@ -134,4 +135,23 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+// GetEnvSlice reads a comma-separated env var, trimming spaces and dropping empties.
+func GetEnvSlice(key string, fallback []string) []string {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	parts := strings.Split(val, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return fallback
+	}
+	return out
 }

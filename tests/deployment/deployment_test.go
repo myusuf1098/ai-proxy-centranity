@@ -120,3 +120,24 @@ func TestDeployment_HealthProbeLifecycle(t *testing.T) {
 		t.Errorf("expected configured port 8099, got %d", cfg.Server.Port)
 	}
 }
+
+func TestDeployment_EnvExampleCoversConfigSurface(t *testing.T) {
+	data, err := os.ReadFile("../../.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, key := range []string{
+		"PG_DB_CONN_MAX_LIFETIME",
+		"PG_REDIS_DB",
+		"PG_ADMIN_TOKEN",
+		"PG_NINEROUTER_URL",
+		"PG_ADMIN_ALLOWED_ORIGINS",
+		"PG_GLOBAL_DENY_MODELS",
+		"PG_GLOBAL_DENY_PROVIDERS",
+	} {
+		if !strings.Contains(s, key) {
+			t.Errorf(".env.example missing %s", key)
+		}
+	}
+}

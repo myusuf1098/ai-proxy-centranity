@@ -14,10 +14,12 @@ docker exec -t pg_postgres pg_dump -U proxygateway proxygateway | gzip > /backup
 ```
 
 ### 1.2 Redis Snapshotting
-Redis persistence uses Append-Only File (AOF) + RDB snapshots saved to `pg_redis_data` volume:
-```bash
-docker exec pg_redis redis-cli BGSAVE
-```
+
+> **Note (2026-08-15):** Redis persistence is currently DISABLED in
+> `docker-compose.yml` (`redis-server --save "" --appendonly no`). Rate-limit
+> state is ephemeral by design (PROMT §17: do not back up transient Redis
+> state as primary recovery). Re-enable AOF only if non-transient data moves
+> to Redis.
 
 ---
 
