@@ -14,6 +14,7 @@ import (
 	"github.com/myusuf1098/ai-proxy-centranity/internal/api"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/store"
 )
 
@@ -67,11 +68,19 @@ func main() {
 		healthCheckers = append(healthCheckers, redisStore)
 	}
 
-	// 4. Setup Health Handlers & Router
+	// 4. Initialize 9Router Upstream Adapter
+	nineRouterAdapter := ninerouter.NewHTTPAdapter(ninerouter.Config{
+		BaseURL: cfg.NineRouter.BaseURL,
+		APIKey:  cfg.NineRouter.APIKey,
+		Timeout: cfg.NineRouter.Timeout,
+	})
+	healthCheckers = append(healthCheckers, nineRouterAdapter)
+
+	// 5. Setup Health Handlers & Router
 	healthHandler := health.NewHandler(healthCheckers...)
 	router := api.NewRouter(cfg, healthHandler, logger)
 
-	// 5. Start Server
+	// 6. Start Server
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
 		Handler:      router,
