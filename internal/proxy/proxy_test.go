@@ -42,6 +42,20 @@ func TestProfileCredentialRedaction(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDelete(t *testing.T) {
+	s := proxy.NewMemoryStore()
+	p := &proxy.Profile{ID: "p1", Name: "HTTP-01", Type: proxy.TypeHTTP, Host: "h", Port: 8080}
+	if err := s.Save(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(context.Background(), "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(context.Background(), "p1"); err == nil {
+		t.Fatal("expected not-found after delete")
+	}
+}
+
 func TestProfileRegistry(t *testing.T) {
 	store := proxy.NewMemoryStore()
 	ctx := context.Background()

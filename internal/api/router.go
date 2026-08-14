@@ -103,17 +103,29 @@ func NewRouterWithTelemetry(
 		systemHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetSystem))
 		overviewHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetOverview))
 		proxiesHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetProxies))
+		createProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.CreateProxy))
+		getProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetProxy))
+		updateProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.UpdateProxy))
+		deleteProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.DeleteProxy))
 
 		if mgmtHandler.auditStore != nil {
 			auditFailures := auditAuthFailures(mgmtHandler.auditStore)
 			systemHandler = auditFailures(systemHandler)
 			overviewHandler = auditFailures(overviewHandler)
 			proxiesHandler = auditFailures(proxiesHandler)
+			createProxyHandler = auditFailures(createProxyHandler)
+			getProxyHandler = auditFailures(getProxyHandler)
+			updateProxyHandler = auditFailures(updateProxyHandler)
+			deleteProxyHandler = auditFailures(deleteProxyHandler)
 		}
 
 		mux.Handle("GET /api/v1/system", systemHandler)
 		mux.Handle("GET /api/v1/overview", overviewHandler)
 		mux.Handle("GET /api/v1/proxies", proxiesHandler)
+		mux.Handle("POST /api/v1/proxies", createProxyHandler)
+		mux.Handle("GET /api/v1/proxies/{id}", getProxyHandler)
+		mux.Handle("PUT /api/v1/proxies/{id}", updateProxyHandler)
+		mux.Handle("DELETE /api/v1/proxies/{id}", deleteProxyHandler)
 	}
 
 	// Root info endpoint
