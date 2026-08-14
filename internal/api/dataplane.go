@@ -16,6 +16,7 @@ import (
 	"github.com/myusuf1098/ai-proxy-centranity/internal/limiter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/quota"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/routing"
 )
 
@@ -28,6 +29,7 @@ type DataPlaneHandler struct {
 	routingEngine *routing.Engine
 	logger        *slog.Logger
 	auditStore    audit.Store
+	quotaStore    quota.QuotaStore
 }
 
 // NewDataPlaneHandler creates a basic DataPlaneHandler
@@ -70,6 +72,7 @@ func NewDataPlaneHandlerWithRouting(
 		policyEngine:  policyEngine,
 		rateLimiter:   rateLimiter,
 		routingEngine: routingEngine,
+		quotaStore:    quota.NewMemoryQuota(),
 		logger:        logger,
 	}
 }
@@ -219,6 +222,19 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// 3b. Enforce token quotas
+	if key != nil && h.quotaStore != nil {
+		// Estimate tokens from messages if possible, else conservative 0 (no limit applied)
+		estimated := estimateTokens(parsed.Messages)
+		allowed, dailyRem, monthlyRem := h.quotaStore.Allow(r.Context(), key.ID, key.DailyTokenQuota, key.MonthlyTokenQuota, estimated)
+		w.Header().Set("X-RateLimit-Quota-Daily-Remaining", fmt.Sprintf("%d", dailyRem))
+		w.Header().Set("X-RateLimit-Quota-Monthly-Remaining", fmt.Sprintf("%d", monthlyRem))
+		if !allowed {
+			h.writeError(w, http.StatusTooManyRequests, "Token quota exceeded", "quota_error", "quota_exceeded")
+			return
+		}
+	}
+
 	// Rewrite model in payload to resolved targetModel
 	var payloadMap map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &payloadMap); err == nil {
@@ -282,6 +298,11 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Record token usage for the model that actually succeeded
+	if key != nil && h.quotaStore != nil {
+		h.quotaStore.Record(r.Context(), key.ID, estimateTokens(parsed.Messages))
+	}
+
 	resp := lastResp
 	defer resp.Body.Close()
 
@@ -325,6 +346,19 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 	}
+}
+
+// estimateTokens: rough heuristic, ponytail: chars/4, upgrade when usage API lands
+func estimateTokens(messages []any) int64 {
+	if len(messages) == 0 {
+		return 0
+	}
+	// conservative: count roughly 4 chars per token across serialized messages
+	b, err := json.Marshal(messages)
+	if err != nil {
+		return 0
+	}
+	return int64(len(b) / 4)
 }
 
 func (h *DataPlaneHandler) writeError(w http.ResponseWriter, statusCode int, message, errType, errCode string) {
