@@ -92,6 +92,13 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches → PR �
 - Prometheus counters wired: `pg_tokens_total` (per key/model/type), `pg_upstream_errors_total` (per provider/code), duration `model` label on successful chat requests
 
 ### Docsfeat(9router): align upstream error codes with compatibility matrix)
+
+### Plan 3 — Ops & Docs Sync
+- `feat(proxy)`: complete profile CRUD API
+- `feat(deploy)`: `proxygateway-tui` service in compose
+- `docs(ops)`: runbook env vars aligned, Redis persistence reality documented
+
+### Docsdocs: sync architecture reality + changelog)
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)
 - Compliance-audit implementation plans (`docs/superpowers/plans/`)
 
