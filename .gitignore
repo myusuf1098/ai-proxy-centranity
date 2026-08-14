@@ -1,0 +1,25 @@
+# Binaries
+bin/
+/proxygateway-api
+/proxygateway-tui
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Test coverage
+cover.out
+coverage.html
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db

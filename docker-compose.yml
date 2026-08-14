@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: proxygateway-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB_NAME:-proxygateway}
+      POSTGRES_USER: ${PG_DB_USER:-proxygateway}
+      POSTGRES_PASSWORD: ${PG_DB_PASS:-pg_centranity_secure_2026}
+    volumes:
+      - proxygateway-postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_DB_USER:-proxygateway} -d ${PG_DB_NAME:-proxygateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: proxygateway-redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    volumes:
+      - proxygateway-redis-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  proxygateway-api:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.api
+    container_name: proxygateway-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - PG_SERVER_PORT=8088
+      - PG_METRICS_PORT=9099
+      - PG_ENV=production
+      - PG_DATABASE_URL=postgres://${PG_DB_USER:-proxygateway}:${PG_DB_PASS:-pg_centranity_secure_2026}@postgres:5432/${PG_DB_NAME:-proxygateway}?sslmode=disable
+      - PG_REDIS_URL=redis://redis:6379/0
+      - PG_NINEROUTER_URL=${PG_NINEROUTER_URL:-http://host.docker.internal:20128}
+      - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:-pg_admin_centranity_token_2026}
+    ports:
+      - "8088:8088"
+      - "9099:9099"
+    networks:
+      - frontend
+      - backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    internal: false
+    driver: bridge
+
+volumes:
+  proxygateway-postgres-data:
+    name: proxygateway-postgres-data
+  proxygateway-redis-data:
+    name: proxygateway-redis-data

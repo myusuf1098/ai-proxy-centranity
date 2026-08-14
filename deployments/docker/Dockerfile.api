@@ -1,0 +1,36 @@
+# Multi-stage Dockerfile for ProxyGateway API
+# Stage 1: Build binary
+FROM golang:alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/bin/proxygateway-api ./cmd/proxygateway-api
+
+# Stage 2: Minimal non-root runtime
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -g 10001 -S appgroup && \
+    adduser -u 10001 -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY --from=builder /app/bin/proxygateway-api /app/proxygateway-api
+COPY migrations/ /app/migrations/
+
+USER appuser:appgroup
+
+EXPOSE 8088 9099
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8088/health/live || exit 1
+
+ENTRYPOINT ["/app/proxygateway-api"]
