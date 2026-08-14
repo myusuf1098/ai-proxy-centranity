@@ -8,6 +8,7 @@ import (
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/telemetry"
 )
 
 // NewRouter initializes HTTP routes without an active upstream adapter (fallback)
@@ -29,12 +30,24 @@ func NewRouterWithDataPlane(cfg *config.Config, healthHandler *health.Handler, d
 	return NewRouterWithManagement(cfg, healthHandler, dpHandler, nil, logger)
 }
 
-// NewRouterWithManagement initializes routes with both DataPlaneHandler and ManagementHandler
+// NewRouterWithManagement initializes routes with DataPlaneHandler and ManagementHandler
 func NewRouterWithManagement(
 	cfg *config.Config,
 	healthHandler *health.Handler,
 	dpHandler *DataPlaneHandler,
 	mgmtHandler *ManagementHandler,
+	logger *slog.Logger,
+) http.Handler {
+	return NewRouterWithTelemetry(cfg, healthHandler, dpHandler, mgmtHandler, telemetry.NewMetrics(), logger)
+}
+
+// NewRouterWithTelemetry initializes routes with DataPlaneHandler, ManagementHandler, and Telemetry
+func NewRouterWithTelemetry(
+	cfg *config.Config,
+	healthHandler *health.Handler,
+	dpHandler *DataPlaneHandler,
+	mgmtHandler *ManagementHandler,
+	metrics *telemetry.Metrics,
 	logger *slog.Logger,
 ) http.Handler {
 	mux := http.NewServeMux()
@@ -43,6 +56,11 @@ func NewRouterWithManagement(
 	if healthHandler != nil {
 		mux.HandleFunc("GET /health/live", healthHandler.Live)
 		mux.HandleFunc("GET /health/ready", healthHandler.Ready)
+	}
+
+	// Prometheus Metrics Exporter
+	if metrics != nil {
+		mux.Handle("GET /metrics", metrics.Handler())
 	}
 
 	// Data Plane routes (/v1/*)
@@ -79,6 +97,9 @@ func NewRouterWithManagement(
 
 	// Standard middleware stack
 	var handler http.Handler = mux
+	if metrics != nil {
+		handler = metrics.Middleware()(handler)
+	}
 	handler = LoggingMiddleware(logger)(handler)
 	handler = RequestIDMiddleware(handler)
 	handler = CORSMiddleware(cfg.Admin.AllowedOrigins)(handler)
