@@ -79,9 +79,10 @@ func NewRouterWithTelemetry(
 
 	// Control Plane / Management API routes (/api/v1/*)
 	if mgmtHandler != nil {
-		mux.HandleFunc("GET /api/v1/system", mgmtHandler.GetSystem)
-		mux.HandleFunc("GET /api/v1/overview", mgmtHandler.GetOverview)
-		mux.HandleFunc("GET /api/v1/proxies", mgmtHandler.GetProxies)
+		adminAuth := AdminAuthMiddleware(cfg.Admin.ManagementToken)
+		mux.Handle("GET /api/v1/system", adminAuth(http.HandlerFunc(mgmtHandler.GetSystem)))
+		mux.Handle("GET /api/v1/overview", adminAuth(http.HandlerFunc(mgmtHandler.GetOverview)))
+		mux.Handle("GET /api/v1/proxies", adminAuth(http.HandlerFunc(mgmtHandler.GetProxies)))
 	}
 
 	// Root info endpoint

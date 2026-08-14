@@ -1,11 +1,15 @@
 package api_test
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/api"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
 )
 
 func TestRequestIDMiddleware(t *testing.T) {
@@ -40,5 +44,20 @@ func TestRecoveryMiddleware(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500 on panic recovery, got %d", w.Code)
+	}
+}
+
+func TestManagementRoutesRequireAdminToken(t *testing.T) {
+	cfg := &config.Config{Admin: config.AdminConfig{ManagementToken: "tok"}}
+	h := health.NewHandler()
+	router := api.NewRouterWithManagement(cfg, h, nil, &api.ManagementHandler{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	for _, path := range []string{"/api/v1/system", "/api/v1/overview", "/api/v1/proxies"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: got %d, want 401", path, rec.Code)
+		}
 	}
 }

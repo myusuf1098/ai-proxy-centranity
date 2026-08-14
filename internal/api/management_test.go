@@ -18,6 +18,7 @@ import (
 
 func TestManagementAPI_System(t *testing.T) {
 	cfg, _ := config.Load()
+	cfg.Admin.ManagementToken = "test-admin-token"
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	healthHandler := health.NewHandler()
 
@@ -25,6 +26,7 @@ func TestManagementAPI_System(t *testing.T) {
 	router := api.NewRouterWithManagement(cfg, healthHandler, nil, mgmtHandler, logger)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -49,6 +51,7 @@ func TestManagementAPI_System(t *testing.T) {
 
 func TestManagementAPI_Overview(t *testing.T) {
 	cfg, _ := config.Load()
+	cfg.Admin.ManagementToken = "test-admin-token"
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	healthHandler := health.NewHandler()
 
@@ -60,6 +63,7 @@ func TestManagementAPI_Overview(t *testing.T) {
 	router := api.NewRouterWithManagement(cfg, healthHandler, nil, mgmtHandler, logger)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
