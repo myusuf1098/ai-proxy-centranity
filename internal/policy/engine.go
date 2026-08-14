@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 )
@@ -13,18 +14,43 @@ type Decision struct {
 	Reason  string `json:"reason"`
 }
 
+type globalDeny struct {
+	models    []string
+	providers []string
+}
+
 // Engine evaluates security, model, and provider policies
-type Engine struct{}
+type Engine struct {
+	mu         sync.RWMutex
+	globalDeny globalDeny
+}
 
 // NewEngine creates a new PolicyEngine
 func NewEngine() *Engine {
 	return &Engine{}
 }
 
+// SetGlobalDeny configures the global denylist, evaluated before per-key policy
+func (e *Engine) SetGlobalDeny(models, providers []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.globalDeny = globalDeny{models: models, providers: providers}
+}
+
 // EvaluateModel checks if the authenticated key is authorized to access the requested model
 func (e *Engine) EvaluateModel(ctx context.Context, key *auth.APIKey, modelID string) Decision {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if key == nil {
 		return Decision{Allowed: false, Reason: "UNAUTHENTICATED"}
+	}
+
+	// 0. Global deny always wins
+	for _, denied := range e.globalDeny.models {
+		if strings.EqualFold(denied, modelID) || denied == "*" {
+			return Decision{Allowed: false, Reason: "GLOBAL_MODEL_DENIED"}
+		}
 	}
 
 	// 1. Check DeniedModels (Deny always overrides allow)
@@ -53,8 +79,18 @@ func (e *Engine) EvaluateModel(ctx context.Context, key *auth.APIKey, modelID st
 
 // EvaluateProvider checks if the key is authorized to access the upstream provider
 func (e *Engine) EvaluateProvider(ctx context.Context, key *auth.APIKey, providerID string) Decision {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if key == nil {
 		return Decision{Allowed: false, Reason: "UNAUTHENTICATED"}
+	}
+
+	// 0. Global deny always wins
+	for _, denied := range e.globalDeny.providers {
+		if strings.EqualFold(denied, providerID) || denied == "*" {
+			return Decision{Allowed: false, Reason: "GLOBAL_PROVIDER_DENIED"}
+		}
 	}
 
 	// 1. Check DeniedProviders
