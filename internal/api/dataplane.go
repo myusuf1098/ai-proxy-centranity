@@ -3,26 +3,53 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/limiter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
 )
 
 // DataPlaneHandler serves OpenAI-compatible client endpoints
 type DataPlaneHandler struct {
-	adapter ninerouter.NineRouterPort
-	logger  *slog.Logger
+	adapter      ninerouter.NineRouterPort
+	keyStore     auth.KeyStore
+	policyEngine *policy.Engine
+	rateLimiter  limiter.RateLimiter
+	logger       *slog.Logger
 }
 
-// NewDataPlaneHandler creates a new DataPlaneHandler
+// NewDataPlaneHandler creates a basic DataPlaneHandler
 func NewDataPlaneHandler(adapter ninerouter.NineRouterPort, logger *slog.Logger) *DataPlaneHandler {
+	return NewDataPlaneHandlerWithPolicy(adapter, nil, policy.NewEngine(), limiter.NewMemoryLimiter(), logger)
+}
+
+// NewDataPlaneHandlerWithPolicy creates a DataPlaneHandler with full authentication, policy and rate limiting
+func NewDataPlaneHandlerWithPolicy(
+	adapter ninerouter.NineRouterPort,
+	keyStore auth.KeyStore,
+	policyEngine *policy.Engine,
+	rateLimiter limiter.RateLimiter,
+	logger *slog.Logger,
+) *DataPlaneHandler {
+	if policyEngine == nil {
+		policyEngine = policy.NewEngine()
+	}
+	if rateLimiter == nil {
+		rateLimiter = limiter.NewMemoryLimiter()
+	}
 	return &DataPlaneHandler{
-		adapter: adapter,
-		logger:  logger,
+		adapter:      adapter,
+		keyStore:     keyStore,
+		policyEngine: policyEngine,
+		rateLimiter:  rateLimiter,
+		logger:       logger,
 	}
 }
 
@@ -52,6 +79,12 @@ type OpenAIError struct {
 // ListModels handles GET /v1/models
 func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	key := auth.GetAPIKey(ctx)
+	if h.keyStore != nil && key == nil {
+		h.writeError(w, http.StatusUnauthorized, "Authentication required", "auth_error", "unauthorized")
+		return
+	}
+
 	models, err := h.adapter.ListModels(ctx)
 	if err != nil {
 		h.writeError(w, http.StatusBadGateway, "failed to retrieve upstream models: "+err.Error(), "upstream_error", "upstream_unavailable")
@@ -65,6 +98,12 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().Unix()
 	for _, m := range models {
+		if key != nil && h.policyEngine != nil {
+			decision := h.policyEngine.EvaluateModel(ctx, key, m.ID)
+			if !decision.Allowed {
+				continue
+			}
+		}
 		response.Data = append(response.Data, OpenAIModel{
 			ID:      m.ID,
 			Object:  "model",
@@ -82,6 +121,12 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
+		return
+	}
+
+	key := auth.GetAPIKey(r.Context())
+	if h.keyStore != nil && key == nil {
+		h.writeError(w, http.StatusUnauthorized, "Authentication required", "auth_error", "unauthorized")
 		return
 	}
 
@@ -112,7 +157,28 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Forward to 9Router adapter
+	// 1. Evaluate model policy
+	if key != nil && h.policyEngine != nil {
+		decision := h.policyEngine.EvaluateModel(r.Context(), key, parsed.Model)
+		if !decision.Allowed {
+			h.writeError(w, http.StatusForbidden, fmt.Sprintf("Access to model '%s' is denied by policy (%s)", parsed.Model, decision.Reason), "policy_error", "model_not_allowed")
+			return
+		}
+	}
+
+	// 2. Evaluate rate limits
+	if key != nil && h.rateLimiter != nil && key.RPMLimit > 0 {
+		allowed, remaining, retryAfter := h.rateLimiter.Allow(r.Context(), key.ID, key.RPMLimit)
+		w.Header().Set("X-RateLimit-Limit-RPM", fmt.Sprintf("%d", key.RPMLimit))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		if !allowed {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())+1))
+			h.writeError(w, http.StatusTooManyRequests, fmt.Sprintf("Rate limit exceeded (%d RPM). Retry after %v", key.RPMLimit, retryAfter), "rate_limit_error", "rate_limited")
+			return
+		}
+	}
+
+	// 3. Forward to 9Router adapter
 	resp, err := h.adapter.ForwardChatCompletion(r.Context(), bytes.NewReader(bodyBytes), r.Header)
 	if err != nil {
 		h.logger.Error("upstream forward failed", slog.Any("error", err), slog.String("request_id", GetRequestID(r.Context())))
@@ -143,7 +209,6 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		for {
 			select {
 			case <-r.Context().Done():
-				// Client disconnected
 				return
 			default:
 				n, readErr := resp.Body.Read(buf)
