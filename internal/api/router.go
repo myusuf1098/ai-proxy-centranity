@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
@@ -14,8 +15,17 @@ func NewRouter(cfg *config.Config, healthHandler *health.Handler, logger *slog.L
 	return NewRouterWithAdapter(cfg, healthHandler, nil, logger)
 }
 
-// NewRouterWithAdapter initializes and wires up HTTP routes with standard middleware and 9Router adapter
+// NewRouterWithAdapter initializes routes with 9Router adapter
 func NewRouterWithAdapter(cfg *config.Config, healthHandler *health.Handler, adapter ninerouter.NineRouterPort, logger *slog.Logger) http.Handler {
+	var dpHandler *DataPlaneHandler
+	if adapter != nil {
+		dpHandler = NewDataPlaneHandler(adapter, logger)
+	}
+	return NewRouterWithDataPlane(cfg, healthHandler, dpHandler, logger)
+}
+
+// NewRouterWithDataPlane initializes routes with DataPlaneHandler and optional auth
+func NewRouterWithDataPlane(cfg *config.Config, healthHandler *health.Handler, dpHandler *DataPlaneHandler, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health routes
@@ -25,10 +35,17 @@ func NewRouterWithAdapter(cfg *config.Config, healthHandler *health.Handler, ada
 	}
 
 	// Data Plane routes
-	if adapter != nil {
-		dpHandler := NewDataPlaneHandler(adapter, logger)
-		mux.HandleFunc("GET /v1/models", dpHandler.ListModels)
-		mux.HandleFunc("POST /v1/chat/completions", dpHandler.ChatCompletions)
+	if dpHandler != nil {
+		var listModelsHandler http.Handler = http.HandlerFunc(dpHandler.ListModels)
+		var chatHandler http.Handler = http.HandlerFunc(dpHandler.ChatCompletions)
+
+		if dpHandler.keyStore != nil {
+			listModelsHandler = auth.AuthMiddleware(dpHandler.keyStore)(listModelsHandler)
+			chatHandler = auth.AuthMiddleware(dpHandler.keyStore)(chatHandler)
+		}
+
+		mux.Handle("GET /v1/models", listModelsHandler)
+		mux.Handle("POST /v1/chat/completions", chatHandler)
 	}
 
 	// Root info endpoint
@@ -42,7 +59,7 @@ func NewRouterWithAdapter(cfg *config.Config, healthHandler *health.Handler, ada
 		_, _ = w.Write([]byte(`{"name":"ProxyGateway Enterprise","version":"2.0","status":"operational"}`))
 	})
 
-	// Wrap mux with standard middleware stack (Recovery -> CORS -> RequestID -> Logging)
+	// Standard middleware stack
 	var handler http.Handler = mux
 	handler = LoggingMiddleware(logger)(handler)
 	handler = RequestIDMiddleware(handler)
