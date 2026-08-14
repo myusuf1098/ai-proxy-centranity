@@ -190,7 +190,74 @@ func TestDataPlaneChatCompletion_UpstreamError(t *testing.T) {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
 
-	if errResp.Error.Code != "upstream_unavailable" {
-		t.Errorf("expected error code upstream_unavailable, got %s", errResp.Error.Code)
+	if errResp.Error.Code != ninerouter.ErrUpstreamUnreach {
+		t.Errorf("expected error code %s, got %s", ninerouter.ErrUpstreamUnreach, errResp.Error.Code)
+	}
+}
+
+func TestUpstream401MapsToAuthError(t *testing.T) {
+	mockAdapter := &mockNineRouterAdapter{
+		forwardResponse: &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader(`{"error":"API key required"}`)),
+		},
+	}
+
+	cfg, _ := config.Load()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	healthHandler := health.NewHandler()
+
+	router := api.NewRouterWithAdapter(cfg, healthHandler, mockAdapter, logger)
+
+	reqBody := `{"model":"cc-haiku","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502 Bad Gateway, got %d", w.Code)
+	}
+
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	if errResp.Error.Code != ninerouter.ErrUpstreamAuth {
+		t.Errorf("expected error code %s, got %s", ninerouter.ErrUpstreamAuth, errResp.Error.Code)
+	}
+}
+
+func TestChatCompletionsRequiresMessages(t *testing.T) {
+	mockAdapter := &mockNineRouterAdapter{
+		forwardResponse: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl-test","object":"chat.completion","choices":[]}`)),
+		},
+	}
+
+	cfg, _ := config.Load()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	healthHandler := health.NewHandler()
+
+	router := api.NewRouterWithAdapter(cfg, healthHandler, mockAdapter, logger)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"cc-haiku"}`))
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
 	}
 }

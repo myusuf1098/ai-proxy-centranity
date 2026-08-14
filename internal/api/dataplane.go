@@ -185,6 +185,11 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if len(parsed.Messages) == 0 {
+		h.writeError(w, http.StatusBadRequest, "field 'messages' is required", "invalid_request_error", "missing_messages")
+		return
+	}
+
 	// 1. Resolve Model Alias & Routing Decision
 	targetModel := parsed.Model
 	var decision *routing.RouteDecision
@@ -256,6 +261,7 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 
 	var lastResp *http.Response
 	var lastErr error
+	lastStatusCode := 0
 	forwarded := false
 	successModel := targetModel
 
@@ -276,11 +282,12 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 
-		if resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusTooManyRequests {
+			lastStatusCode = resp.StatusCode
 			if h.routingEngine != nil {
 				h.routingEngine.RecordResult(t, false)
 			}
-			h.logger.Warn("upstream 5xx, trying fallback", slog.Int("status", resp.StatusCode), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
+			h.logger.Warn("upstream failure, trying fallback", slog.Int("status", resp.StatusCode), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
 			resp.Body.Close()
 			lastErr = fmt.Errorf("upstream returned %d for %s", resp.StatusCode, t)
 			continue
@@ -296,13 +303,17 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 	}
 
 	if !forwarded {
+		code := ninerouter.ErrUpstreamUnreach
+		if lastStatusCode > 0 {
+			code = upstreamErrorCode(lastStatusCode)
+		}
 		if h.metrics != nil {
-			h.metrics.UpstreamErrors.WithLabelValues("9router", "upstream_unavailable").Inc()
+			h.metrics.UpstreamErrors.WithLabelValues("9router", code).Inc()
 		}
 		if lastErr != nil {
-			h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+lastErr.Error(), "upstream_error", "upstream_unavailable")
+			h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+lastErr.Error(), "upstream_error", code)
 		} else {
-			h.writeError(w, http.StatusBadGateway, "upstream gateway error", "upstream_error", "upstream_unavailable")
+			h.writeError(w, http.StatusBadGateway, "upstream gateway error", "upstream_error", code)
 		}
 		return
 	}
@@ -360,6 +371,20 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 	} else {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// upstreamErrorCode maps an upstream HTTP status to a 9Router contract code
+func upstreamErrorCode(status int) string {
+	switch {
+	case status == http.StatusUnauthorized:
+		return ninerouter.ErrUpstreamAuth
+	case status == http.StatusTooManyRequests:
+		return ninerouter.ErrUpstreamRateLimit
+	case status >= 500:
+		return ninerouter.ErrUpstreamUnavail
+	default:
+		return ninerouter.ErrUpstreamUnavail
 	}
 }
 

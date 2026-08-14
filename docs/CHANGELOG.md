@@ -81,6 +81,12 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches → PR �
 - CORS honors `AllowedOrigins`; `PG_ADMIN_ALLOWED_ORIGINS` env wiring lands in a follow-up plan
 
 ### Docs (fix(security): audit admin-auth failures and cap MemoryStore)
+
+### Feature Completion (Plan 2)
+- Upstream error codes aligned with 9Router compatibility matrix: 401 → `UPSTREAM_AUTH_ERROR`, 429 → `UPSTREAM_RATE_LIMIT`, 5xx → `UPSTREAM_UNAVAILABLE`, transport error → `UPSTREAM_UNREACHABLE`
+- Chat request validates `messages` field present (400 `missing_messages`)
+
+### Docsfeat(9router): align upstream error codes with compatibility matrix)
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)
 - Compliance-audit implementation plans (`docs/superpowers/plans/`)
 

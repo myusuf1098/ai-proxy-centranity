@@ -24,6 +24,14 @@ type Config struct {
 	Timeout time.Duration
 }
 
+// Error codes per docs/api/9router-compatibility.md §2
+const (
+	ErrUpstreamAuth      = "UPSTREAM_AUTH_ERROR"
+	ErrUpstreamRateLimit = "UPSTREAM_RATE_LIMIT"
+	ErrUpstreamUnavail   = "UPSTREAM_UNAVAILABLE"
+	ErrUpstreamUnreach   = "UPSTREAM_UNREACHABLE"
+)
+
 // NineRouterPort defines the decoupled interface for 9Router operations
 type NineRouterPort interface {
 	CheckHealth(ctx context.Context) error
