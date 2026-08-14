@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"runtime"
 	"time"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/proxy"
@@ -22,6 +24,7 @@ type ManagementHandler struct {
 	routeEngine *routing.Engine
 	proxyStore  proxy.Store
 	logger      *slog.Logger
+	auditStore  audit.Store
 }
 
 // NewManagementHandler creates a new ManagementHandler
@@ -107,6 +110,25 @@ func (h *ManagementHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// SetAuditStore injects the audit trail store
+func (h *ManagementHandler) SetAuditStore(s audit.Store) { h.auditStore = s }
+
+// logAudit emits an audit event when an audit store is configured
+func (h *ManagementHandler) logAudit(ctx context.Context, eventType, actor, target, status string, meta map[string]string) {
+	if h.auditStore == nil {
+		return
+	}
+	_ = h.auditStore.Log(ctx, audit.Event{
+		ID:        GenerateAuditID(),
+		Timestamp: time.Now().UTC(),
+		Actor:     actor,
+		EventType: eventType,
+		Target:    target,
+		Status:    status,
+		Metadata:  meta,
+	})
 }
 
 // GetProxies handles GET /api/v1/proxies

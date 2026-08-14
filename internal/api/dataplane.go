@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/limiter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
@@ -25,6 +27,7 @@ type DataPlaneHandler struct {
 	rateLimiter   limiter.RateLimiter
 	routingEngine *routing.Engine
 	logger        *slog.Logger
+	auditStore    audit.Store
 }
 
 // NewDataPlaneHandler creates a basic DataPlaneHandler
@@ -99,6 +102,7 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key := auth.GetAPIKey(ctx)
 	if h.keyStore != nil && key == nil {
+		h.logAudit(ctx, audit.EventAuthFailure, "unknown", "/v1/models", "unauthorized", nil)
 		h.writeError(w, http.StatusUnauthorized, "Authentication required", "auth_error", "unauthorized")
 		return
 	}
@@ -144,6 +148,7 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 
 	key := auth.GetAPIKey(r.Context())
 	if h.keyStore != nil && key == nil {
+		h.logAudit(r.Context(), audit.EventAuthFailure, "unknown", "/v1/chat/completions", "unauthorized", nil)
 		h.writeError(w, http.StatusUnauthorized, "Authentication required", "auth_error", "unauthorized")
 		return
 	}
@@ -177,19 +182,26 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 
 	// 1. Resolve Model Alias & Routing Decision
 	targetModel := parsed.Model
+	var decision *routing.RouteDecision
 	if h.routingEngine != nil {
-		decision, err := h.routingEngine.Resolve(r.Context(), parsed.Model)
+		decision, err = h.routingEngine.Resolve(r.Context(), parsed.Model)
 		if err != nil {
 			h.writeError(w, http.StatusServiceUnavailable, "Routing error: "+err.Error(), "routing_error", "routing_failed")
 			return
 		}
 		targetModel = decision.TargetModel
 	}
+	if decision != nil {
+		h.logAudit(r.Context(), audit.EventRouteResolved, keyIDOrUnknown(r), targetModel, "resolved",
+			map[string]string{"requested": parsed.Model, "strategy": decision.Reason})
+	}
 
 	// 2. Evaluate model policy
 	if key != nil && h.policyEngine != nil {
 		decision := h.policyEngine.EvaluateModel(r.Context(), key, targetModel)
 		if !decision.Allowed {
+			h.logAudit(r.Context(), audit.EventPolicyDeny, keyIDOrUnknown(r), "chat.completions", "forbidden",
+				map[string]string{"model": targetModel})
 			h.writeError(w, http.StatusForbidden, fmt.Sprintf("Access to model '%s' is denied by policy (%s)", targetModel, decision.Reason), "policy_error", "model_not_allowed")
 			return
 		}
@@ -202,6 +214,8 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 		if !allowed {
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())+1))
+			h.logAudit(r.Context(), audit.EventRateLimited, keyIDOrUnknown(r), "chat.completions", "rate_limited",
+				map[string]string{"limit": "rpm"})
 			h.writeError(w, http.StatusTooManyRequests, fmt.Sprintf("Rate limit exceeded (%d RPM). Retry after %v", key.RPMLimit, retryAfter), "rate_limit_error", "rate_limited")
 			return
 		}
@@ -288,4 +302,31 @@ func (h *DataPlaneHandler) writeError(w http.ResponseWriter, statusCode int, mes
 	errObj.Error.Type = errType
 	errObj.Error.Code = errCode
 	_ = json.NewEncoder(w).Encode(errObj)
+}
+
+// SetAuditStore injects the audit trail store
+func (h *DataPlaneHandler) SetAuditStore(s audit.Store) { h.auditStore = s }
+
+// logAudit emits an audit event when an audit store is configured
+func (h *DataPlaneHandler) logAudit(ctx context.Context, eventType, actor, target, status string, meta map[string]string) {
+	if h.auditStore == nil {
+		return
+	}
+	_ = h.auditStore.Log(ctx, audit.Event{
+		ID:        GenerateAuditID(),
+		Timestamp: time.Now().UTC(),
+		Actor:     actor,
+		EventType: eventType,
+		Target:    target,
+		Status:    status,
+		Metadata:  meta,
+	})
+}
+
+// keyIDOrUnknown returns the authenticated key ID or "unknown" for unauthenticated actors
+func keyIDOrUnknown(r *http.Request) string {
+	if key := auth.GetAPIKey(r.Context()); key != nil {
+		return key.ID
+	}
+	return "unknown"
 }

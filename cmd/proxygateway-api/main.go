@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/api"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
@@ -106,6 +107,9 @@ func main() {
 	)
 
 	// 6. Setup Health Handlers & Router
+	auditStore := audit.NewMemoryStore()
+	dpHandler.SetAuditStore(auditStore)
+	mgmtHandler.SetAuditStore(auditStore)
 	healthHandler := health.NewHandler(healthCheckers...)
 	router := api.NewRouterWithManagement(cfg, healthHandler, dpHandler, mgmtHandler, logger)
 

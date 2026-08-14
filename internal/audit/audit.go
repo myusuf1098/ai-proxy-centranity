@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+// Event type constants (spec FEAT-011 §2)
+const (
+	EventAuthSuccess   = "AUTH_SUCCESS"
+	EventAuthFailure   = "AUTH_FAILURE"
+	EventPolicyDeny    = "POLICY_DENY"
+	EventRateLimited   = "RATE_LIMITED"
+	EventRouteResolved = "ROUTE_RESOLVED"
+	EventConfigChanged = "CONFIG_CHANGED"
+)
+
 // Event represents a structured audit record
 type Event struct {
 	ID        string            `json:"id"`
