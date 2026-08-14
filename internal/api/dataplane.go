@@ -257,6 +257,7 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 	var lastResp *http.Response
 	var lastErr error
 	forwarded := false
+	successModel := targetModel
 
 	for _, t := range targets {
 		// Rewrite model per target
@@ -290,6 +291,7 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		}
 		lastResp = resp
 		forwarded = true
+		successModel = t
 		break
 	}
 
@@ -307,8 +309,8 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 
 	// Record token usage + latency for the model that actually succeeded
 	if h.metrics != nil {
-		h.metrics.TokensTotal.WithLabelValues(keyIDOrUnknown(r), targetModel, "output").Add(float64(estimateTokens(parsed.Messages)))
-		h.metrics.RequestDuration.WithLabelValues("/v1/chat/completions", targetModel).Observe(time.Since(startTime).Seconds())
+		h.metrics.TokensTotal.WithLabelValues(keyIDOrUnknown(r), successModel, "output").Add(float64(estimateTokens(parsed.Messages)))
+		h.metrics.RequestDuration.WithLabelValues("/v1/chat/completions", successModel).Observe(time.Since(startTime).Seconds())
 	}
 
 	// Record token usage for the model that actually succeeded

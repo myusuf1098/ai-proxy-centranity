@@ -65,10 +65,63 @@ func TestMetricsEmittedOnRequest(t *testing.T) {
 	if !strings.Contains(out, "pg_http_requests_total{") {
 		t.Fatal("request counter series not emitted")
 	}
-	if !strings.Contains(out, "pg_tokens_total{") {
+	// Assert the model label on the TOKEN series specifically, not just
+	// anywhere in the output (the duration series could carry it instead).
+	tokenLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "pg_tokens_total{") {
+			tokenLine = line
+			break
+		}
+	}
+	if tokenLine == "" {
 		t.Fatal("token counter series not emitted")
 	}
-	if !strings.Contains(out, `model="cc-haiku"`) {
-		t.Fatalf("metric missing non-empty model label:\n%s", out)
+	if !strings.Contains(tokenLine, `model="cc-haiku"`) {
+		t.Fatalf("token series missing expected model label:\n%s", tokenLine)
+	}
+}
+
+func TestMetricsModelLabelOnFallback(t *testing.T) {
+	cfg, _ := config.Load()
+	healthHandler := health.NewHandler()
+
+	metrics := telemetry.NewMetrics()
+	adapter := &failFirstAdapter{models: []ninerouter.ModelInfo{}, calls: map[string]int{}}
+	engine := routing.NewEngine(nil)
+	engine.SetAlias("coding", []string{"cc-sonnet", "cc-haiku"})
+
+	dp := api.NewDataPlaneHandlerWithRouting(adapter, nil, policy.NewEngine(), limiter.NewMemoryLimiter(), engine, testLogger())
+	router := api.NewRouterWithTelemetry(cfg, healthHandler, dp, nil, metrics, testLogger())
+
+	body := `{"model":"coding","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (fallback should succeed)", w.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	out := rec.Body.String()
+
+	// Token series must carry the FALLBACK model (cc-haiku), not the primary (cc-sonnet).
+	tokenLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "pg_tokens_total{") {
+			tokenLine = line
+			break
+		}
+	}
+	if tokenLine == "" {
+		t.Fatal("token counter series not emitted")
+	}
+	if !strings.Contains(tokenLine, `model="cc-haiku"`) {
+		t.Fatalf("token series missing fallback model label:\n%s", tokenLine)
+	}
+	if strings.Contains(tokenLine, `model="cc-sonnet"`) {
+		t.Fatalf("token series mislabeled with primary model:\n%s", tokenLine)
 	}
 }
