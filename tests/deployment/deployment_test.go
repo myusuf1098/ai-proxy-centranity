@@ -55,6 +55,23 @@ func TestDeployment_DockerComposeArtifacts(t *testing.T) {
 	}
 }
 
+func TestDeployment_HasTUIComposeService(t *testing.T) {
+	data, err := os.ReadFile("../../docker-compose.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "proxygateway-tui:") {
+		t.Fatal("docker-compose.yml missing proxygateway-tui service")
+	}
+	if !strings.Contains(s, "Dockerfile.tui") {
+		t.Fatal("proxygateway-tui service must use Dockerfile.tui")
+	}
+	if strings.Contains(s, `"8089:8089"`) {
+		t.Fatal("TUI must not publish a port")
+	}
+}
+
 func TestDeployment_DockerfileStructure(t *testing.T) {
 	apiDocker, err := os.ReadFile("../../deployments/docker/Dockerfile.api")
 	if err != nil {

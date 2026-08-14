@@ -10,10 +10,11 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
-	apiURL := "http://127.0.0.1:8088"
-	if err == nil {
-		apiURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port)
+	apiURL := getEnvString("PG_API_BASE_URL", "http://127.0.0.1:8088")
+	if apiURL == "http://127.0.0.1:8088" {
+		if cfg, err := config.Load(); err == nil {
+			apiURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port)
+		}
 	}
 
 	model := tui.NewModel(apiURL)
@@ -23,4 +24,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func getEnvString(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
 }

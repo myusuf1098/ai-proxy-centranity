@@ -70,6 +70,22 @@ services:
       - backend
       - centranity_shared
 
+  proxygateway-tui:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.tui
+    container_name: proxygateway-tui
+    restart: unless-stopped
+    depends_on:
+      proxygateway-api:
+        condition: service_healthy
+    environment:
+      - PG_API_BASE_URL=http://proxygateway-api:8088
+    networks:
+      - frontend
+    stdin_open: true
+    tty: true
+
 networks:
   frontend:
     driver: bridge
