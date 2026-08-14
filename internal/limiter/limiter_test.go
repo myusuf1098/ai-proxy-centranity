@@ -57,3 +57,22 @@ func TestMemoryLimiter_DifferentKeysIsolated(t *testing.T) {
 		t.Errorf("key B should be allowed")
 	}
 }
+
+func TestMemoryLimiterAllowRPS(t *testing.T) {
+	l := limiter.NewMemoryLimiter()
+	ctx := context.Background()
+	// limit 2 RPS
+	if ok, rem, _ := l.AllowRPS(ctx, "k1", 2); !ok || rem != 1 {
+		t.Fatalf("1st: ok=%v rem=%d", ok, rem)
+	}
+	if ok, rem, _ := l.AllowRPS(ctx, "k1", 2); !ok || rem != 0 {
+		t.Fatalf("2nd: ok=%v rem=%d", ok, rem)
+	}
+	if ok, _, retry := l.AllowRPS(ctx, "k1", 2); ok {
+		t.Fatalf("3rd should be rejected, retryAfter=%v", retry)
+	}
+	// different key unaffected
+	if ok, _, _ := l.AllowRPS(ctx, "k2", 2); !ok {
+		t.Fatal("different key should be allowed")
+	}
+}
