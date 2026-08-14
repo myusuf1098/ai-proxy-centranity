@@ -17,7 +17,9 @@ func main() {
 		apiURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port)
 	}
 
-	model := tui.NewModel(apiURL)
+	adminToken := os.Getenv("PG_ADMIN_TOKEN")
+
+	model := tui.NewModelWithToken(apiURL, adminToken)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

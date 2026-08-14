@@ -10,7 +10,7 @@ This document provides recovery strategies for data loss, corrupted schemas, har
 ### 1.1 PostgreSQL State Backup
 Automated daily logical backup via `pg_dump`:
 ```bash
-docker exec -t pg_postgres pg_dump -U proxygateway proxygateway | gzip > /backups/proxygateway_$(date +%Y%m%d_%H%M%S).sql.gz
+docker exec -t proxygateway-postgres pg_dump -U proxygateway proxygateway | gzip > /backups/proxygateway_$(date +%Y%m%d_%H%M%S).sql.gz
 ```
 
 ### 1.2 Redis Snapshotting
@@ -32,12 +32,12 @@ docker exec -t pg_postgres pg_dump -U proxygateway proxygateway | gzip > /backup
    ```
 2. Drop and recreate database:
    ```bash
-   docker exec -i pg_postgres psql -U proxygateway -c "DROP DATABASE proxygateway;"
-   docker exec -i pg_postgres psql -U proxygateway -c "CREATE DATABASE proxygateway;"
+   docker exec -i proxygateway-postgres psql -U proxygateway -c "DROP DATABASE proxygateway;"
+   docker exec -i proxygateway-postgres psql -U proxygateway -c "CREATE DATABASE proxygateway;"
    ```
 3. Restore SQL dump:
    ```bash
-   gunzip -c /backups/proxygateway_YYYYMMDD_HHMMSS.sql.gz | docker exec -i pg_postgres psql -U proxygateway -d proxygateway
+   gunzip -c /backups/proxygateway_YYYYMMDD_HHMMSS.sql.gz | docker exec -i proxygateway-postgres psql -U proxygateway -d proxygateway
    ```
 4. Restart API container (auto-migration verifies schema):
    ```bash

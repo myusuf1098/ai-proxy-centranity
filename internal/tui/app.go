@@ -37,25 +37,34 @@ var tabNames = []string{
 
 // Model represents the Bubble Tea TUI state
 type Model struct {
-	activeTab    Tab
-	apiURL       string
-	width        int
-	height       int
-	client       *http.Client
-	systemStatus map[string]interface{}
-	overview     map[string]interface{}
+	activeTab     Tab
+	apiURL        string
+	adminToken    string
+	width         int
+	height        int
+	client        *http.Client
+	systemStatus  map[string]interface{}
+	overview      map[string]interface{}
 	lastRefreshed time.Time
-	err          error
+	err           error
 }
 
-// NewModel creates an initialized TUI Model
+// NewModel creates an initialized TUI Model without admin token auth
 func NewModel(apiURL string) Model {
+	return NewModelWithToken(apiURL, "")
+}
+
+// NewModelWithToken creates an initialized TUI Model that sends the admin
+// token as a Bearer Authorization header on Management API requests
+// (required when the Management API runs with AdminAuthMiddleware).
+func NewModelWithToken(apiURL string, adminToken string) Model {
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:8088"
 	}
 	return Model{
 		activeTab:     TabOverview,
 		apiURL:        strings.TrimRight(apiURL, "/"),
+		adminToken:    adminToken,
 		width:         100,
 		height:        30,
 		client:        &http.Client{Timeout: 3 * time.Second},
@@ -76,17 +85,28 @@ type dataLoadedMsg struct {
 	err          error
 }
 
+func (m Model) get(path string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s%s", m.apiURL, path), nil)
+	if err != nil {
+		return nil, err
+	}
+	if m.adminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+m.adminToken)
+	}
+	return m.client.Do(req)
+}
+
 func (m Model) fetchData() tea.Msg {
 	var sys map[string]interface{}
 	var over map[string]interface{}
 
-	respSys, err := m.client.Get(fmt.Sprintf("%s/api/v1/system", m.apiURL))
+	respSys, err := m.get("/api/v1/system")
 	if err == nil {
 		defer respSys.Body.Close()
 		_ = json.NewDecoder(respSys.Body).Decode(&sys)
 	}
 
-	respOver, err := m.client.Get(fmt.Sprintf("%s/api/v1/overview", m.apiURL))
+	respOver, err := m.get("/api/v1/overview")
 	if err == nil {
 		defer respOver.Body.Close()
 		_ = json.NewDecoder(respOver.Body).Decode(&over)

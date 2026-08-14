@@ -62,6 +62,9 @@ services:
       - PG_REDIS_URL=redis://redis:6379/0
       - PG_NINEROUTER_URL=${PG_NINEROUTER_URL:-http://ninerouter:20128}
       - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:?set PG_ADMIN_TOKEN in .env}
+      - PG_ADMIN_ALLOWED_ORIGINS=${PG_ADMIN_ALLOWED_ORIGINS:-*}
+      - PG_GLOBAL_DENY_MODELS=${PG_GLOBAL_DENY_MODELS:-}
+      - PG_GLOBAL_DENY_PROVIDERS=${PG_GLOBAL_DENY_PROVIDERS:-}
     ports:
       - "8088:8088"
       - "9099:9099"
@@ -81,6 +84,7 @@ services:
         condition: service_healthy
     environment:
       - PG_API_BASE_URL=http://proxygateway-api:8088
+      - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:-}
     networks:
       - frontend
     stdin_open: true

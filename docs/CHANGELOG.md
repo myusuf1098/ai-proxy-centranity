@@ -78,7 +78,7 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches → PR �
 - Admin token auth on Management API (`/api/v1/*`), fail-closed (empty/mismatched token → 401)
 - Real SOCKS5 dialer via `golang.org/x/net/proxy`
 - Audit trail wired into request lifecycle: `AUTH_FAILURE` / `POLICY_DENY` / `RATE_LIMITED` / `ROUTE_RESOLVED`
-- CORS honors `AllowedOrigins`; `PG_ADMIN_ALLOWED_ORIGINS` env wiring lands in a follow-up plan
+- CORS honors `AllowedOrigins`, wired via `PG_ADMIN_ALLOWED_ORIGINS` env (comma-separated; default `*`) — see Plan 3
 
 ### Docs (fix(security): audit admin-auth failures and cap MemoryStore)
 
@@ -97,6 +97,9 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches → PR �
 - `feat(proxy)`: complete profile CRUD API
 - `feat(deploy)`: `proxygateway-tui` service in compose
 - `docs(ops)`: runbook env vars aligned, Redis persistence reality documented
+- CORS env wiring (Plan 1 follow-up) now lands: compose passes `PG_ADMIN_ALLOWED_ORIGINS` / `PG_GLOBAL_DENY_MODELS` / `PG_GLOBAL_DENY_PROVIDERS` to the API container, activating the headline CORS + global-deny features under `docker compose up`
+- TUI authenticates to the Management API: `PG_ADMIN_TOKEN` read from env, sent as `Authorization: Bearer` header on API requests; compose TUI service receives `PG_ADMIN_TOKEN`
+- Ops docs container-name references corrected to `proxygateway-postgres` / `proxygateway-redis`
 
 ### Docsdocs: sync architecture reality + changelog)
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)

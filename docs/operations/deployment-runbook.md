@@ -77,3 +77,10 @@ docker compose run --rm proxygateway-tui
 # Or locally:
 ./bin/proxygateway-tui
 ```
+
+> The TUI service is interactive by design (`tty: true` / `stdin_open: true`).
+> `docker compose run` allocates a TTY; in non-interactive shells (CI,
+> scripts, no attached terminal) pass `-T`:
+> `docker compose run -T --rm proxygateway-tui`. Detached `docker compose up`
+> starts the service headless — attach with `docker attach proxygateway-tui`
+> to interact.

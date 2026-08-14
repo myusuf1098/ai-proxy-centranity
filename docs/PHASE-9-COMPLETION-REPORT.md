@@ -33,7 +33,7 @@ Complete
 - Health probes `/health/live` and `/health/ready` verified and ready for container orchestrator readiness checks.
 
 ## Database
-- Isolated containerized PostgreSQL 16 volume `pg_postgres_data` with automated migration verification.
+- Isolated containerized PostgreSQL 16 volume `proxygateway-postgres-data` with automated migration verification.
 
 ## 9Router
 - Integrated upstream routing verified with connection troubleshooting runbook.

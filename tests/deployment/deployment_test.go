@@ -121,6 +121,55 @@ func TestDeployment_HealthProbeLifecycle(t *testing.T) {
 	}
 }
 
+func TestDeployment_ComposeAPIPassesAdminAndDenyEnv(t *testing.T) {
+	composeContent, err := os.ReadFile("../../docker-compose.yml")
+	if err != nil {
+		t.Fatalf("failed to read docker-compose.yml: %v", err)
+	}
+
+	s := string(composeContent)
+	start := strings.Index(s, "proxygateway-api:")
+	if start == -1 {
+		t.Fatal("docker-compose.yml missing proxygateway-api service")
+	}
+	block := s[start:]
+	if end := strings.Index(block, "\n  proxygateway-tui:"); end != -1 {
+		block = block[:end]
+	}
+
+	for _, key := range []string{
+		"PG_ADMIN_TOKEN",
+		"PG_ADMIN_ALLOWED_ORIGINS",
+		"PG_GLOBAL_DENY_MODELS",
+		"PG_GLOBAL_DENY_PROVIDERS",
+	} {
+		if !strings.Contains(block, key) {
+			t.Errorf("proxygateway-api env block missing %s", key)
+		}
+	}
+}
+
+func TestDeployment_ComposeTUIPassesAdminToken(t *testing.T) {
+	composeContent, err := os.ReadFile("../../docker-compose.yml")
+	if err != nil {
+		t.Fatalf("failed to read docker-compose.yml: %v", err)
+	}
+
+	s := string(composeContent)
+	start := strings.Index(s, "proxygateway-tui:")
+	if start == -1 {
+		t.Fatal("docker-compose.yml missing proxygateway-tui service")
+	}
+	block := s[start:]
+	if end := strings.Index(block, "\nnetworks:"); end != -1 {
+		block = block[:end]
+	}
+
+	if !strings.Contains(block, "PG_ADMIN_TOKEN") {
+		t.Error("proxygateway-tui env block missing PG_ADMIN_TOKEN")
+	}
+}
+
 func TestDeployment_EnvExampleCoversConfigSurface(t *testing.T) {
 	data, err := os.ReadFile("../../.env.example")
 	if err != nil {
