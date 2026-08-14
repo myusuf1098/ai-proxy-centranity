@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	xproxy "golang.org/x/net/proxy"
 )
 
 // BuildTransport creates an *http.Transport configured with the proxy profile
@@ -46,21 +48,19 @@ func BuildTransport(profile *Profile) (*http.Transport, error) {
 		}, nil
 
 	case TypeSOCKS5:
-		rawURL := fmt.Sprintf("socks5://%s:%d", profile.Host, profile.Port)
-		if profile.Username != "" {
-			rawURL = fmt.Sprintf("socks5://%s:%s@%s:%d", url.QueryEscape(profile.Username), url.QueryEscape(profile.Password), profile.Host, profile.Port)
+		auth := &xproxy.Auth{User: profile.Username, Password: profile.Password}
+		if profile.Username == "" {
+			auth = nil
 		}
-
-		proxyURL, err = url.Parse(rawURL)
+		dialer, err := xproxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", profile.Host, profile.Port), auth, xproxy.Direct)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse SOCKS5 URL: %w", err)
+			return nil, fmt.Errorf("socks5 dialer: %w", err)
 		}
-
 		return &http.Transport{
-			Proxy:               http.ProxyURL(proxyURL),
-			MaxIdleConns:        100,
-			IdleConnTimeout:     90 * time.Second,
-			TLSHandshakeTimeout: 10 * time.Second,
+			Dial:            dialer.Dial,
+			DialContext:     dialer.(xproxy.ContextDialer).DialContext,
+			MaxIdleConns:    100,
+			IdleConnTimeout: 90 * time.Second,
 		}, nil
 
 	default:

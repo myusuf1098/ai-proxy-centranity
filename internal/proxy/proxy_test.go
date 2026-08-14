@@ -109,6 +109,24 @@ func TestBuildTransport_HTTPProxy(t *testing.T) {
 	}
 }
 
+func TestBuildTransportSOCKS5UsesRealDialer(t *testing.T) {
+	profile := &proxy.Profile{
+		ID:   "socks-test",
+		Name: "SOCKS5-01",
+		Type: proxy.TypeSOCKS5,
+		Host: "127.0.0.1",
+		Port: 1080,
+	}
+	tr, err := proxy.BuildTransport(profile)
+	if err != nil {
+		t.Fatalf("BuildTransport: %v", err)
+	}
+	if tr.DialContext == nil {
+		t.Fatal("SOCKS5 transport has no custom DialContext")
+	}
+	// stdlib http.ProxyURL leaves DialContext nil; a real SOCKS5 dialer sets it
+}
+
 func TestCheckHealth_Direct(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
