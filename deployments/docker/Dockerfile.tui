@@ -1,0 +1,27 @@
+# Multi-stage Dockerfile for ProxyGateway Administrative TUI
+FROM golang:alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/bin/proxygateway-tui ./cmd/proxygateway-tui
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata ncurses && \
+    addgroup -g 10001 -S appgroup && \
+    adduser -u 10001 -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY --from=builder /app/bin/proxygateway-tui /app/proxygateway-tui
+
+USER appuser:appgroup
+
+ENTRYPOINT ["/app/proxygateway-tui"]
