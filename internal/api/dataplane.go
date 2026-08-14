@@ -311,7 +311,10 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		if lastStatusCode > 0 {
 			code = upstreamErrorCode(lastStatusCode)
 		}
-		if h.metrics != nil {
+		// 5xx/429/401 attempts already incremented per-attempt in the loop; the
+		// summary counts only the transport-error-only case (no HTTP status to
+		// map per-attempt), so all-5xx fail is counted exactly once per target.
+		if h.metrics != nil && lastStatusCode == 0 {
 			h.metrics.UpstreamErrors.WithLabelValues("9router", code).Inc()
 		}
 		if lastErr != nil {

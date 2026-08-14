@@ -97,9 +97,10 @@ func (m *Metrics) Middleware() func(http.Handler) http.Handler {
 			statusStr := fmt.Sprintf("%d", rec.statusCode)
 
 			m.RequestsTotal.WithLabelValues(r.Method, r.URL.Path, statusStr).Inc()
-			// Chat handler owns the duration observe (model-labeled); skip the
-			// blank-model observation here so each chat request is counted once.
-			if r.URL.Path != "/v1/chat/completions" {
+			// Chat handler owns the duration observe for successful requests
+			// (model-labeled); the middleware observes only failures so they keep
+			// a duration sample without double-counting successes.
+			if r.URL.Path != "/v1/chat/completions" || rec.statusCode >= http.StatusBadRequest {
 				m.RequestDuration.WithLabelValues(r.URL.Path, "").Observe(duration)
 			}
 		})

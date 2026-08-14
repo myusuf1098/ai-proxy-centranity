@@ -276,3 +276,69 @@ func TestMetricsUpstreamErrorsOnTransportError(t *testing.T) {
 		t.Fatalf("prior 5xx attempt not counted:\nwant %q\nout:\n%s", wantUnavail, out)
 	}
 }
+
+func TestMetricsAll5xxFailCountedOncePerTarget(t *testing.T) {
+	cfg, _ := config.Load()
+	healthHandler := health.NewHandler()
+
+	metrics := telemetry.NewMetrics()
+	adapter := &always503Adapter{calls: map[string]int{}}
+	engine := routing.NewEngine(nil)
+	engine.SetAlias("fast", []string{"cc-haiku", "gemini-flash"})
+
+	dp := api.NewDataPlaneHandlerWithRouting(adapter, nil, policy.NewEngine(), limiter.NewMemoryLimiter(), engine, testLogger())
+	router := api.NewRouterWithTelemetry(cfg, healthHandler, dp, nil, metrics, testLogger())
+
+	body := `{"model":"fast","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("got %d, want 502 (all targets 503)", w.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	out := rec.Body.String()
+
+	// Two targets each 503: exactly N=2 per-attempt counts, no summary re-count.
+	want := `pg_upstream_errors_total{code="UPSTREAM_UNAVAILABLE",provider="9router"} 2`
+	if !strings.Contains(out, want) {
+		t.Fatalf("all-5xx fail count wrong:\nwant %q\nout:\n%s", want, out)
+	}
+	wantOne := `pg_upstream_errors_total{code="UPSTREAM_UNAVAILABLE",provider="9router"} 1`
+	if strings.Contains(out, wantOne) {
+		t.Fatalf("all-5xx fail double-counted (summary re-increment):\n%s", out)
+	}
+}
+
+func TestRejectedChatRequestStillHasDurationSample(t *testing.T) {
+	cfg, _ := config.Load()
+	healthHandler := health.NewHandler()
+
+	metrics := telemetry.NewMetrics()
+	dp := api.NewDataPlaneHandlerWithRouting(
+		&okMetricsAdapter{}, nil, policy.NewEngine(), limiter.NewMemoryLimiter(), routing.NewEngine(nil), testLogger(),
+	)
+	router := api.NewRouterWithTelemetry(cfg, healthHandler, dp, nil, metrics, testLogger())
+
+	// Missing messages -> 400 before any upstream forward.
+	body := `{"model":"cc-haiku"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400", w.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	out := rec.Body.String()
+
+	// A rejected chat request must still produce a duration sample (middleware
+	// observes failures), even though the handler's success observe never runs.
+	want := `pg_request_duration_seconds_count{model="",path="/v1/chat/completions"} 1`
+	if !strings.Contains(out, want) {
+		t.Fatalf("rejected chat request has no duration sample:\nwant %q\nout:\n%s", want, out)
+	}
+}
