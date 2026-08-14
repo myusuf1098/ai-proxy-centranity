@@ -53,7 +53,7 @@ services:
       - PG_ENV=production
       - PG_DATABASE_URL=postgres://${PG_DB_USER:-proxygateway}:${PG_DB_PASS:-pg_centranity_secure_2026}@postgres:5432/${PG_DB_NAME:-proxygateway}?sslmode=disable
       - PG_REDIS_URL=redis://redis:6379/0
-      - PG_NINEROUTER_URL=${PG_NINEROUTER_URL:-http://host.docker.internal:20128}
+      - PG_NINEROUTER_URL=${PG_NINEROUTER_URL:-http://ninerouter:20128}
       - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:-pg_admin_centranity_token_2026}
     ports:
       - "8088:8088"
@@ -61,8 +61,7 @@ services:
     networks:
       - frontend
       - backend
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - centranity_shared
 
 networks:
   frontend:
@@ -70,6 +69,9 @@ networks:
   backend:
     internal: false
     driver: bridge
+  centranity_shared:
+    name: rys-centranity_default
+    external: true
 
 volumes:
   proxygateway-postgres-data:
