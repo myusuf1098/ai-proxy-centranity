@@ -40,6 +40,22 @@ func (t *transportErrAdapter) ForwardChatCompletion(ctx context.Context, body io
 	return nil, errors.New("connection refused")
 }
 
+// forbiddenMetricsAdapter forwards a 403 from upstream — in the forwarded-4xx
+// class that the handler owns for duration (not 5xx/401/429).
+type forbiddenMetricsAdapter struct{}
+
+func (forbiddenMetricsAdapter) CheckHealth(ctx context.Context) error { return nil }
+func (forbiddenMetricsAdapter) ListModels(ctx context.Context) ([]ninerouter.ModelInfo, error) {
+	return nil, nil
+}
+func (forbiddenMetricsAdapter) ForwardChatCompletion(ctx context.Context, body io.Reader, headers http.Header) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"denied"}}`)),
+	}, nil
+}
+
 type okMetricsAdapter struct{}
 
 func (okMetricsAdapter) CheckHealth(ctx context.Context) error { return nil }
@@ -317,18 +333,27 @@ func TestRejectedChatRequestStillHasDurationSample(t *testing.T) {
 	healthHandler := health.NewHandler()
 
 	metrics := telemetry.NewMetrics()
+	keyStore := auth.NewMemoryKeyStore()
+	rateLimiter := limiter.NewMemoryLimiter()
 	dp := api.NewDataPlaneHandlerWithRouting(
-		&okMetricsAdapter{}, nil, policy.NewEngine(), limiter.NewMemoryLimiter(), routing.NewEngine(nil), testLogger(),
+		&okMetricsAdapter{}, keyStore, policy.NewEngine(), rateLimiter, routing.NewEngine(nil), testLogger(),
 	)
 	router := api.NewRouterWithTelemetry(cfg, healthHandler, dp, nil, metrics, testLogger())
 
-	// Missing messages -> 400 before any upstream forward.
-	body := `{"model":"cc-haiku"}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("got %d, want 400", w.Code)
+	// RPMLimit=1, second request rejected 429 before any upstream forward.
+	raw, key, _ := auth.GenerateAPIKey("limited")
+	key.RPMLimit = 1
+	_ = keyStore.Create(context.Background(), key)
+
+	body := `{"model":"cc-haiku","messages":[{"role":"user","content":"hi"}]}`
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+raw)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if i == 1 && w.Code != http.StatusTooManyRequests {
+			t.Fatalf("got %d, want 429 (rate-limit rejection)", w.Code)
+		}
 	}
 
 	rec := httptest.NewRecorder()
@@ -340,5 +365,41 @@ func TestRejectedChatRequestStillHasDurationSample(t *testing.T) {
 	want := `pg_request_duration_seconds_count{model="",path="/v1/chat/completions"} 1`
 	if !strings.Contains(out, want) {
 		t.Fatalf("rejected chat request has no duration sample:\nwant %q\nout:\n%s", want, out)
+	}
+}
+
+func TestForwardedUpstream403DurationSingleCounted(t *testing.T) {
+	cfg, _ := config.Load()
+	healthHandler := health.NewHandler()
+
+	metrics := telemetry.NewMetrics()
+	dp := api.NewDataPlaneHandlerWithRouting(
+		&forbiddenMetricsAdapter{}, nil, policy.NewEngine(), limiter.NewMemoryLimiter(), routing.NewEngine(nil), testLogger(),
+	)
+	router := api.NewRouterWithTelemetry(cfg, healthHandler, dp, nil, metrics, testLogger())
+
+	// Upstream returns 403; the handler forwards it (not in the 5xx/401/429
+	// failure class), so the model-labeled handler observe is the only sample.
+	body := `{"model":"cc-haiku","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403 (forwarded upstream)", w.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	out := rec.Body.String()
+
+	// Exactly ONE duration sample total: the handler's model-labeled one.
+	// The middleware must not add a blank-model sample for forwarded 4xx.
+	wantModel := `pg_request_duration_seconds_count{model="cc-haiku",path="/v1/chat/completions"} 1`
+	if !strings.Contains(out, wantModel) {
+		t.Fatalf("forwarded 403 missing handler duration sample:\nwant %q\nout:\n%s", wantModel, out)
+	}
+	wantBlank := `pg_request_duration_seconds_count{model="",path="/v1/chat/completions"}`
+	if strings.Contains(out, wantBlank) {
+		t.Fatalf("forwarded 403 double-counted by middleware (blank-model sample present):\n%s", out)
 	}
 }
