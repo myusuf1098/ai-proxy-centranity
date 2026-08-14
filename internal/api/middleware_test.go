@@ -47,6 +47,31 @@ func TestRecoveryMiddleware(t *testing.T) {
 	}
 }
 
+func TestCORSAllowedOrigins(t *testing.T) {
+	allowed := []string{"https://admin.example.com"}
+	h := api.CORSMiddleware(allowed)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Allowed origin
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
+	req.Header.Set("Origin", "https://admin.example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://admin.example.com" {
+		t.Errorf("allowed origin: got %q", got)
+	}
+
+	// Disallowed origin — no ACAO header
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.Header.Set("Origin", "https://evil.example.com")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if got := rec2.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("disallowed origin leaked: %q", got)
+	}
+}
+
 func TestManagementRoutesRequireAdminToken(t *testing.T) {
 	cfg := &config.Config{Admin: config.AdminConfig{ManagementToken: "tok"}}
 	h := health.NewHandler()
