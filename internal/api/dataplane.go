@@ -102,7 +102,6 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key := auth.GetAPIKey(ctx)
 	if h.keyStore != nil && key == nil {
-		h.logAudit(ctx, audit.EventAuthFailure, "unknown", "/v1/models", "unauthorized", nil)
 		h.writeError(w, http.StatusUnauthorized, "Authentication required", "auth_error", "unauthorized")
 		return
 	}
@@ -148,7 +147,6 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 
 	key := auth.GetAPIKey(r.Context())
 	if h.keyStore != nil && key == nil {
-		h.logAudit(r.Context(), audit.EventAuthFailure, "unknown", "/v1/chat/completions", "unauthorized", nil)
 		h.writeError(w, http.StatusUnauthorized, "Authentication required", "auth_error", "unauthorized")
 		return
 	}
@@ -309,10 +307,15 @@ func (h *DataPlaneHandler) SetAuditStore(s audit.Store) { h.auditStore = s }
 
 // logAudit emits an audit event when an audit store is configured
 func (h *DataPlaneHandler) logAudit(ctx context.Context, eventType, actor, target, status string, meta map[string]string) {
-	if h.auditStore == nil {
+	emitAudit(ctx, h.auditStore, eventType, actor, target, status, meta)
+}
+
+// emitAudit writes an audit event to the store, ignoring nil stores and write errors
+func emitAudit(ctx context.Context, store audit.Store, eventType, actor, target, status string, meta map[string]string) {
+	if store == nil {
 		return
 	}
-	_ = h.auditStore.Log(ctx, audit.Event{
+	_ = store.Log(ctx, audit.Event{
 		ID:        GenerateAuditID(),
 		Timestamp: time.Now().UTC(),
 		Actor:     actor,

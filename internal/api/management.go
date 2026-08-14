@@ -117,18 +117,7 @@ func (h *ManagementHandler) SetAuditStore(s audit.Store) { h.auditStore = s }
 
 // logAudit emits an audit event when an audit store is configured
 func (h *ManagementHandler) logAudit(ctx context.Context, eventType, actor, target, status string, meta map[string]string) {
-	if h.auditStore == nil {
-		return
-	}
-	_ = h.auditStore.Log(ctx, audit.Event{
-		ID:        GenerateAuditID(),
-		Timestamp: time.Now().UTC(),
-		Actor:     actor,
-		EventType: eventType,
-		Target:    target,
-		Status:    status,
-		Metadata:  meta,
-	})
+	emitAudit(ctx, h.auditStore, eventType, actor, target, status, meta)
 }
 
 // GetProxies handles GET /api/v1/proxies

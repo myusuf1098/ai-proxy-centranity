@@ -10,6 +10,8 @@ import (
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/limiter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
@@ -37,17 +39,21 @@ func TestAuditAuthFailureEmitted(t *testing.T) {
 	auditStore := audit.NewMemoryStore()
 	keyStore := auth.NewMemoryKeyStore()
 	adapter := auditAdapterStub{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	dp := NewDataPlaneHandlerWithRouting(
 		adapter, keyStore, policy.NewEngine(), limiter.NewMemoryLimiter(),
-		routing.NewEngine(nil), slog.New(slog.NewTextHandler(io.Discard, nil)),
+		routing.NewEngine(nil), logger,
 	)
-	dp.auditStore = auditStore
+	dp.SetAuditStore(auditStore)
 
-	// No auth header -> 401 -> AUTH_FAILURE
+	cfg, _ := config.Load()
+	router := NewRouterWithManagement(cfg, health.NewHandler(), dp, nil, logger)
+
+	// No auth header -> 401 at AuthMiddleware -> AUTH_FAILURE at router level
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	rec := httptest.NewRecorder()
-	dp.ListModels(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("got %d, want 401", rec.Code)

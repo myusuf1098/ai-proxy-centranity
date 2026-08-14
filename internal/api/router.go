@@ -4,12 +4,26 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/telemetry"
 )
+
+// auditAuthFailures wraps a handler and emits an AUTH_FAILURE audit event when it responds 401
+func auditAuthFailures(store audit.Store) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(rw, r)
+			if rw.statusCode == http.StatusUnauthorized {
+				emitAudit(r.Context(), store, audit.EventAuthFailure, "unknown", r.URL.Path, "unauthorized", nil)
+			}
+		})
+	}
+}
 
 // NewRouter initializes HTTP routes without an active upstream adapter (fallback)
 func NewRouter(cfg *config.Config, healthHandler *health.Handler, logger *slog.Logger) http.Handler {
@@ -71,6 +85,10 @@ func NewRouterWithTelemetry(
 		if dpHandler.keyStore != nil {
 			listModelsHandler = auth.AuthMiddleware(dpHandler.keyStore)(listModelsHandler)
 			chatHandler = auth.AuthMiddleware(dpHandler.keyStore)(chatHandler)
+		}
+		if dpHandler.auditStore != nil {
+			listModelsHandler = auditAuthFailures(dpHandler.auditStore)(listModelsHandler)
+			chatHandler = auditAuthFailures(dpHandler.auditStore)(chatHandler)
 		}
 
 		mux.Handle("GET /v1/models", listModelsHandler)
