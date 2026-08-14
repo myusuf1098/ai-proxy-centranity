@@ -18,6 +18,7 @@ import (
 	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/quota"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/routing"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/telemetry"
 )
 
 // DataPlaneHandler serves OpenAI-compatible client endpoints
@@ -30,6 +31,7 @@ type DataPlaneHandler struct {
 	logger        *slog.Logger
 	auditStore    audit.Store
 	quotaStore    quota.QuotaStore
+	metrics       *telemetry.Metrics
 }
 
 // NewDataPlaneHandler creates a basic DataPlaneHandler
@@ -143,6 +145,8 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 // ChatCompletions handles POST /v1/chat/completions
 func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 		return
@@ -290,12 +294,21 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 	}
 
 	if !forwarded {
+		if h.metrics != nil {
+			h.metrics.UpstreamErrors.WithLabelValues("9router", "upstream_unavailable").Inc()
+		}
 		if lastErr != nil {
 			h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+lastErr.Error(), "upstream_error", "upstream_unavailable")
 		} else {
 			h.writeError(w, http.StatusBadGateway, "upstream gateway error", "upstream_error", "upstream_unavailable")
 		}
 		return
+	}
+
+	// Record token usage + latency for the model that actually succeeded
+	if h.metrics != nil {
+		h.metrics.TokensTotal.WithLabelValues(keyIDOrUnknown(r), targetModel, "output").Add(float64(estimateTokens(parsed.Messages)))
+		h.metrics.RequestDuration.WithLabelValues("/v1/chat/completions", targetModel).Observe(time.Since(startTime).Seconds())
 	}
 
 	// Record token usage for the model that actually succeeded
@@ -373,6 +386,9 @@ func (h *DataPlaneHandler) writeError(w http.ResponseWriter, statusCode int, mes
 
 // SetAuditStore injects the audit trail store
 func (h *DataPlaneHandler) SetAuditStore(s audit.Store) { h.auditStore = s }
+
+// SetMetrics injects the telemetry metrics collectors
+func (h *DataPlaneHandler) SetMetrics(m *telemetry.Metrics) { h.metrics = m }
 
 // logAudit emits an audit event when an audit store is configured
 func (h *DataPlaneHandler) logAudit(ctx context.Context, eventType, actor, target, status string, meta map[string]string) {

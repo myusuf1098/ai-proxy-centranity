@@ -79,6 +79,8 @@ func NewRouterWithTelemetry(
 
 	// Data Plane routes (/v1/*)
 	if dpHandler != nil {
+		dpHandler.SetMetrics(metrics)
+
 		var listModelsHandler http.Handler = http.HandlerFunc(dpHandler.ListModels)
 		var chatHandler http.Handler = http.HandlerFunc(dpHandler.ChatCompletions)
 
