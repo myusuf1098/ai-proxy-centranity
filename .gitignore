@@ -14,6 +14,10 @@ bin/
 cover.out
 coverage.html
 
+# Code indexes (self-contained, regenerable)
+.codegraph/
+graphify-out/
+
 # IDE & Editor
 .vscode/
 .idea/
