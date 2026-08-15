@@ -35,3 +35,5 @@ Provide an enterprise-grade, keyboard-first, terminal user interface (TUI) for a
    - Lip Gloss design tokens: High readability, professional monochromatic/subdued color palette, responsive terminal width/height adaptivity.
 3. **Execution**:
    - `cmd/proxygateway-tui`: Interactive TUI application connecting to Gateway API.
+- Write management actions (FR-012): `add`, `edit`, `enable`/`disable`, `delete` on API keys, proxy profiles, policies, and routing aliases via modal forms; destructive actions require confirmation.
+- New management endpoints: `/api/v1/keys` (GET/POST/PUT/DELETE), `/api/v1/policies` (GET/PUT), `/api/v1/routes` (GET/PUT/DELETE), all under AdminAuthMiddleware.

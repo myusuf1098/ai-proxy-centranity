@@ -1,7 +1,7 @@
 # TUI Management Write — Gap Closure Design
 
 > **Date**: 2026-08-16
-> **Status**: Draft — awaiting review
+> **Status**: Implemented (2026-08-16)
 > **Related**: `06-TUI-UX-SPEC.md` (interaction model), `01-PRD.md` FR-012 (TUI admin actions), `02-ROADMAP.md` Phase 7, `FEAT-010-admin-tui.md`
 
 ## 1. Context & Gap
