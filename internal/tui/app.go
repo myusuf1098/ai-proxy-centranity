@@ -299,7 +299,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirm = "delete"
 			}
 		case "x":
-			if m.isManagementTab() {
+			if m.canToggle() {
 				m.confirm = "toggle"
 			}
 		}
@@ -361,9 +361,17 @@ func (m Model) resourceList() []map[string]interface{} {
 	case TabKeys:
 		return m.keys
 	case TabRouting:
-		out := make([]map[string]interface{}, 0, len(m.routes))
-		for alias, targets := range m.routes {
-			out = append(out, map[string]interface{}{"alias": alias, "targets": targets})
+		// Sorted so the row order matches renderRouting: the `selected`
+		// cursor, delete/toggle targets, and edit pre-fill all hit the same
+		// alias. This is the single source of truth for routing row order.
+		aliases := make([]string, 0, len(m.routes))
+		for alias := range m.routes {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		out := make([]map[string]interface{}, 0, len(aliases))
+		for _, alias := range aliases {
+			out = append(out, map[string]interface{}{"alias": alias, "targets": m.routes[alias]})
 		}
 		return out
 	default:
@@ -400,6 +408,17 @@ func (m Model) selectedEnabled() bool {
 func (m Model) isManagementTab() bool {
 	switch m.activeTab {
 	case TabProxies, TabKeys, TabPolicies, TabRouting:
+		return true
+	}
+	return false
+}
+
+// canToggle reports whether the active screen supports enable/disable toggle.
+// ROUTING has no enable/disable state (aliases are deleted, not disabled), so
+// the x key is a no-op there rather than arming a dead confirmation.
+func (m Model) canToggle() bool {
+	switch m.activeTab {
+	case TabProxies, TabKeys:
 		return true
 	}
 	return false
@@ -487,14 +506,8 @@ func (m Model) openEditForm() Model {
 		})
 		alias, _ := row["alias"].(string)
 		m.form.SetValue(0, alias)
-		if targets, ok := row["targets"].([]interface{}); ok {
-			var parts []string
-			for _, t := range targets {
-				if s, ok := t.(string); ok {
-					parts = append(parts, s)
-				}
-			}
-			m.form.SetValue(1, strings.Join(parts, ","))
+		if targets, ok := row["targets"].([]string); ok {
+			m.form.SetValue(1, strings.Join(targets, ","))
 		}
 	}
 	return m
@@ -734,17 +747,13 @@ func (m Model) renderRouting() string {
 	}
 	s.WriteString("ALIAS        TARGET RESOLUTION CHAIN                  CIRCUIT STATE\n")
 	s.WriteString("------------------------------------------------------------------------\n")
-	aliases := make([]string, 0, len(m.routes))
-	for alias := range m.routes {
-		aliases = append(aliases, alias)
-	}
-	sort.Strings(aliases)
-	for i, alias := range aliases {
+	for i, row := range m.resourceList() {
 		sel := "  "
 		if i == m.selected {
 			sel = "> "
 		}
-		targets := m.routes[alias]
+		alias, _ := row["alias"].(string)
+		targets, _ := row["targets"].([]string)
 		chain := "1. " + strings.Join(targets, ", ")
 		s.WriteString(fmt.Sprintf("%s%-11s ➔   %-36s %s\n", sel, alias, chain, badgeGreen.Render("CLOSED (Healthy)")))
 	}

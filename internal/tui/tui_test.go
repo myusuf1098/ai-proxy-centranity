@@ -345,3 +345,117 @@ func TestTUILiveRenderNoRecords(t *testing.T) {
 		t.Fatalf("expected 'No records' on empty ROUTING screen, got: %s", view)
 	}
 }
+
+// TestTUIRoutingDeleteTargetsSortedAlias verifies the routing delete target
+// matches the row the `>` cursor highlights: with multiple routes the model
+// sorts aliases so the renderer and the delete path share one order.
+func TestTUIRoutingDeleteTargetsSortedAlias(t *testing.T) {
+	var mu sync.Mutex
+	var delPath string
+	delReqs := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method == http.MethodDelete {
+			delReqs++
+			delPath = r.URL.Path
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v1/routes":
+			w.Write([]byte(`{"routes":{"beta":["m2"],"alpha":["m1"]}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "token")
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- m.Init()() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData")
+	}
+	var updated tea.Model
+	updated, _ = m.Update(msg)
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")}) // ROUTING
+	m = updated.(tui.Model)
+
+	// The `>` cursor marks the first row; confirm it is the first sorted alias.
+	if view := m.View(); !strings.Contains(view, "> alpha") {
+		t.Fatalf("expected cursor on first sorted alias 'alpha', got:\n%s", view)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}) // delete -> confirm
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}) // confirm
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if delReqs != 1 || delPath != "/api/v1/routes/alpha" {
+		t.Fatalf("expected DELETE /api/v1/routes/alpha after y, got %d requests last=%s", delReqs, delPath)
+	}
+}
+
+// TestTUIRoutingToggleNoOp verifies the x key does not arm a confirmation on
+// the ROUTING screen (aliases have no enable/disable state): pressing x then y
+// issues no write request and no confirm prompt is rendered.
+func TestTUIRoutingToggleNoOp(t *testing.T) {
+	var mu sync.Mutex
+	writes := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method != http.MethodGet {
+			writes++
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v1/routes":
+			w.Write([]byte(`{"routes":{"alpha":["m1"]}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "token")
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- m.Init()() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData")
+	}
+	var updated tea.Model
+	updated, _ = m.Update(msg)
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")}) // ROUTING
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")}) // toggle -> must NOT arm confirm
+	m = updated.(tui.Model)
+
+	if view := m.View(); strings.Contains(view, "Confirm") {
+		t.Fatalf("expected no confirm prompt after x on ROUTING, got:\n%s", view)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}) // would confirm if armed
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if writes != 0 {
+		t.Fatalf("expected no write request after x+y on ROUTING, got %d", writes)
+	}
+}
