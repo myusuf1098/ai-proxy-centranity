@@ -24,6 +24,8 @@ chmod 600 .env
 # PG_ADMIN_ALLOWED_ORIGINS=https://admin.yourdomain.com
 ```
 
+> `PG_DB_PASS` and `PG_ADMIN_TOKEN` are **required** — `docker compose up` fails fast if either is unset in `.env`.
+
 ---
 
 ## 3. Deployment Steps
@@ -33,6 +35,8 @@ chmod 600 .env
 docker compose build --pull
 docker compose up -d
 ```
+
+> All services carry `mem_limit`; `postgres`/`redis` live on the `backend` network (`internal: true`), reachable only by compose peers, never from the host.
 
 ### Step 3.2: Verify Service Health
 Check health probes:

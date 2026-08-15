@@ -1,14 +1,13 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
     container_name: proxygateway-postgres
     restart: unless-stopped
+    mem_limit: 1g
     environment:
       POSTGRES_DB: ${PG_DB_NAME:-proxygateway}
       POSTGRES_USER: ${PG_DB_USER:-proxygateway}
-      POSTGRES_PASSWORD: ${PG_DB_PASS:-pg_centranity_secure_2026}
+      POSTGRES_PASSWORD: ${PG_DB_PASS:?set PG_DB_PASS in .env}
     volumes:
       - proxygateway-postgres-data:/var/lib/postgresql/data
     networks:
@@ -24,6 +23,7 @@ services:
     image: redis:7-alpine
     container_name: proxygateway-redis
     restart: unless-stopped
+    mem_limit: 256m
     command: redis-server --save "" --appendonly no
     volumes:
       - proxygateway-redis-data:/data
@@ -42,19 +42,26 @@ services:
       dockerfile: deployments/docker/Dockerfile.api
     container_name: proxygateway-api
     restart: unless-stopped
+    mem_limit: 512m
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8088/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     environment:
       - PG_SERVER_PORT=8088
       - PG_METRICS_PORT=9099
       - PG_ENV=production
-      - PG_DATABASE_URL=postgres://${PG_DB_USER:-proxygateway}:${PG_DB_PASS:-pg_centranity_secure_2026}@postgres:5432/${PG_DB_NAME:-proxygateway}?sslmode=disable
+      - PG_DATABASE_URL=postgres://${PG_DB_USER:-proxygateway}:${PG_DB_PASS:?set PG_DB_PASS in .env}@postgres:5432/${PG_DB_NAME:-proxygateway}?sslmode=disable
       - PG_REDIS_URL=redis://redis:6379/0
       - PG_NINEROUTER_URL=${PG_NINEROUTER_URL:-http://ninerouter:20128}
-      - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:-pg_admin_centranity_token_2026}
+      - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:?set PG_ADMIN_TOKEN in .env}
     ports:
       - "8088:8088"
       - "9099:9099"
@@ -67,7 +74,7 @@ networks:
   frontend:
     driver: bridge
   backend:
-    internal: false
+    internal: true
     driver: bridge
   centranity_shared:
     name: rys-centranity_default

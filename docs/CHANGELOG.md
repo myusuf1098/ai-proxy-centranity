@@ -60,6 +60,12 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches â†’ PR â†
 ---
 
 ## Unreleased / Working Tree
+
+### Docker Hardening
+- `docker-compose.yml`: remove deprecated `version:`; `backend` network now `internal: true`; `mem_limit` on postgres (1g), redis (256m), api (512m); secrets `PG_DB_PASS`/`PG_ADMIN_TOKEN` now required (`${VAR:?}` fails fast); compose-level healthcheck on `proxygateway-api`.
+- `.env.example`: mark `PG_DB_PASS`/`PG_ADMIN_TOKEN` REQUIRED.
+- `tests/deployment/deployment_test.go`: assert hardening contract (no `version:` line, `internal: true`, per-service `mem_limit`, no hardcoded secret defaults).
+
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)
 
 ## Note

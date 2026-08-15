@@ -10,6 +10,7 @@
 | **Circuit Breaker OPEN (`routing_failed`)** | Upstream model exceeded 5 consecutive 5xx errors | Check TUI Screen 7 (Routing) or `/metrics` | Wait 30s for automatic HALF_OPEN canary probe or resolve upstream failure. |
 | **PostgreSQL Connection Refused** | PostgreSQL container starting / down | `docker logs pg_postgres` | Check volume permissions and verify database port 5432 is accessible. |
 | **Redis Rate Limiter Errors** | Redis down or out of memory | `docker exec pg_redis redis-cli PING` | Check Redis AOF log and memory consumption. |
+| **Compose fails with `PG_DB_PASS` / `PG_ADMIN_TOKEN` variable not set** | Missing required secret in `.env` | `grep -E 'PG_DB_PASS|PG_ADMIN_TOKEN' .env` | Set both in `.env` (`chmod 600 .env`) and re-run `docker compose up -d`. |
 
 ---
 
