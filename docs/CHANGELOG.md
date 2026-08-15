@@ -66,6 +66,10 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches â†’ PR â†
 - `.env.example`: mark `PG_DB_PASS`/`PG_ADMIN_TOKEN` REQUIRED.
 - `tests/deployment/deployment_test.go`: assert hardening contract (no `version:` line, `internal: true`, per-service `mem_limit`, no hardcoded secret defaults).
 
+### TUI Navbar Wrap
+- `internal/tui/app.go`: tab nav bar now wraps to a new row every 6 tabs (was one horizontal row of 12), so it never spills off the right edge.
+- `internal/tui/tui_test.go`: `TestTUINavbarWrapsSixPerRow` asserts tabs 1-6 on row 1 and tabs 7-12 on row 2.
+
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)
 
 ## Note
