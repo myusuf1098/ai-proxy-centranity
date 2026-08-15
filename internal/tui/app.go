@@ -186,16 +186,24 @@ func (m Model) View() string {
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	// 2. Tab Navigation Bar
-	var tabs []string
-	for i, name := range tabNames {
-		if Tab(i) == m.activeTab {
-			tabs = append(tabs, activeTabStyle.Render(fmt.Sprintf("%d:%s", i+1, name)))
-		} else {
-			tabs = append(tabs, tabStyle.Render(fmt.Sprintf("%d:%s", i+1, name)))
+	// 2. Tab Navigation Bar (max 6 per row, wraps to next row)
+	var rows []string
+	for i := 0; i < len(tabNames); i += 6 {
+		var tabs []string
+		end := i + 6
+		if end > len(tabNames) {
+			end = len(tabNames)
 		}
+		for j := i; j < end; j++ {
+			if Tab(j) == m.activeTab {
+				tabs = append(tabs, activeTabStyle.Render(fmt.Sprintf("%d:%s", j+1, tabNames[j])))
+			} else {
+				tabs = append(tabs, tabStyle.Render(fmt.Sprintf("%d:%s", j+1, tabNames[j])))
+			}
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, tabs...))
 	}
-	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	tabBar := lipgloss.JoinVertical(lipgloss.Left, rows...)
 	b.WriteString(tabBar)
 	b.WriteString("\n\n")
 

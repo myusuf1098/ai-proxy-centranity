@@ -31,7 +31,7 @@ Provide an enterprise-grade, keyboard-first, terminal user interface (TUI) for a
      10. `AUDIT`
      11. `SYSTEM`
      12. `SETTINGS`
-   - Navigation: Top tab bar, keyboard shortcuts (`Tab`, `1`-`9`, `0`, `q`, `r`, `Enter`, `Esc`), status footer.
+   - Navigation: Top tab bar wrapped 6 tabs per row (rows of 1-6 and 7-12, never spilling past the right edge), keyboard shortcuts (`Tab`, `1`-`9`, `0`, `-`, `=`, `q`, `r`, `Enter`, `Esc`), status footer.
    - Lip Gloss design tokens: High readability, professional monochromatic/subdued color palette, responsive terminal width/height adaptivity.
 3. **Execution**:
    - `cmd/proxygateway-tui`: Interactive TUI application connecting to Gateway API.
