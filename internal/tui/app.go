@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -45,6 +46,9 @@ type Model struct {
 	client        *http.Client
 	systemStatus  map[string]interface{}
 	overview      map[string]interface{}
+	keys          []map[string]interface{}
+	policies      map[string]interface{}
+	routes        map[string][]string
 	lastRefreshed time.Time
 	err           error
 }
@@ -82,18 +86,70 @@ func (m Model) ActiveTab() Tab {
 type dataLoadedMsg struct {
 	systemStatus map[string]interface{}
 	overview     map[string]interface{}
+	keys         []map[string]interface{}
+	policies     map[string]interface{}
+	routes       map[string][]string
 	err          error
 }
 
-func (m Model) get(path string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s%s", m.apiURL, path), nil)
+// Do issues an authenticated request. body is raw JSON ("" for GET/DELETE).
+func (m Model) Do(method, path, body string) (*http.Response, error) {
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, fmt.Sprintf("%s%s", m.apiURL, path), reader)
 	if err != nil {
 		return nil, err
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if m.adminToken != "" {
 		req.Header.Set("Authorization", "Bearer "+m.adminToken)
 	}
 	return m.client.Do(req)
+}
+
+func (m Model) get(path string) (*http.Response, error) {
+	return m.Do(http.MethodGet, path, "")
+}
+
+func (m Model) getKeys() []map[string]interface{} {
+	resp, err := m.get("/api/v1/keys")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Keys []map[string]interface{} `json:"keys"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out.Keys
+}
+
+func (m Model) getPolicies() map[string]interface{} {
+	resp, err := m.get("/api/v1/policies")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out map[string]interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out
+}
+
+func (m Model) getRoutes() map[string][]string {
+	resp, err := m.get("/api/v1/routes")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Routes map[string][]string `json:"routes"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out.Routes
 }
 
 func (m Model) fetchData() tea.Msg {
@@ -115,6 +171,9 @@ func (m Model) fetchData() tea.Msg {
 	return dataLoadedMsg{
 		systemStatus: sys,
 		overview:     over,
+		keys:         m.getKeys(),
+		policies:     m.getPolicies(),
+		routes:       m.getRoutes(),
 		err:          err,
 	}
 }
@@ -140,6 +199,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.overview != nil {
 			m.overview = msg.overview
+		}
+		if msg.keys != nil {
+			m.keys = msg.keys
+		}
+		if msg.policies != nil {
+			m.policies = msg.policies
+		}
+		if msg.routes != nil {
+			m.routes = msg.routes
 		}
 		m.lastRefreshed = time.Now()
 		m.err = msg.err

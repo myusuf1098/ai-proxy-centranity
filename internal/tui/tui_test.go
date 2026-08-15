@@ -116,13 +116,40 @@ func TestTUIFetchDataSendsAdminToken(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(gotAuth) != 2 {
-		t.Fatalf("expected 2 API requests, got %d", len(gotAuth))
+	if len(gotAuth) != 5 {
+		t.Fatalf("expected 5 API requests, got %d", len(gotAuth))
 	}
 	for i, auth := range gotAuth {
 		if auth != "Bearer secret-token" {
 			t.Errorf("request %d: expected Authorization header %q, got %q", i, "Bearer secret-token", auth)
 		}
+	}
+}
+
+func TestTUIPostSendsAdminToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			t.Errorf("expected auth header, got %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected JSON content-type, got %q", r.Header.Get("Content-Type"))
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"key":"sk-raw","id":"key_1"}`))
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "secret-token")
+	resp, err := m.Do(http.MethodPost, "/api/v1/keys", `{"name":"x"}`)
+	if err != nil {
+		t.Fatalf("Do returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("expected 201, got %d", resp.StatusCode)
 	}
 }
 
