@@ -24,6 +24,35 @@ func TestDeployment_DockerComposeArtifacts(t *testing.T) {
 			t.Errorf("docker-compose.yml missing expected service: %s", svc)
 		}
 	}
+
+	if strings.HasPrefix(content, "version:") {
+		t.Errorf("docker-compose.yml must not declare a deprecated top-level version")
+	}
+
+	// backend network must be internal (postgres/redis have no host ingress)
+	if !strings.Contains(content, "backend:") || !strings.Contains(content, "internal: true") {
+		t.Errorf("docker-compose.yml must set backend network internal: true")
+	}
+
+	// every service must carry a mem_limit (compose non-swarm ignores deploy.resources)
+	for _, svc := range []string{"postgres:", "redis:", "proxygateway-api:"} {
+		idx := strings.Index(content, svc)
+		if idx < 0 {
+			t.Errorf("docker-compose.yml missing service block: %s", svc)
+			continue
+		}
+		block := content[idx : idx+400]
+		if !strings.Contains(block, "mem_limit:") {
+			t.Errorf("service %s missing mem_limit", svc)
+		}
+	}
+
+	// no hardcoded secret defaults may remain
+	for _, secret := range []string{"pg_centranity_secure_2026", "pg_admin_centranity_token_2026"} {
+		if strings.Contains(content, secret) {
+			t.Errorf("docker-compose.yml contains hardcoded secret default: %s", secret)
+		}
+	}
 }
 
 func TestDeployment_DockerfileStructure(t *testing.T) {
