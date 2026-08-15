@@ -14,6 +14,7 @@ import (
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/proxy"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/routing"
 )
@@ -24,7 +25,7 @@ func TestManagementAPI_System(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	healthHandler := health.NewHandler()
 
-	mgmtHandler := api.NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), proxy.NewMemoryStore(), logger)
+	mgmtHandler := api.NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), policy.NewEngine(), proxy.NewMemoryStore(), logger)
 	router := api.NewRouterWithManagement(cfg, healthHandler, nil, mgmtHandler, logger)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
@@ -61,7 +62,7 @@ func TestManagementAPI_Overview(t *testing.T) {
 	proxyStore := proxy.NewMemoryStore()
 	keyStore := auth.NewMemoryKeyStore()
 
-	mgmtHandler := api.NewManagementHandler(nil, keyStore, routeEngine, proxyStore, logger)
+	mgmtHandler := api.NewManagementHandler(nil, keyStore, routeEngine, policy.NewEngine(), proxyStore, logger)
 	router := api.NewRouterWithManagement(cfg, healthHandler, nil, mgmtHandler, logger)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
@@ -88,7 +89,7 @@ func TestManagementAPI_Overview(t *testing.T) {
 func TestProxyCRUD(t *testing.T) {
 	store := proxy.NewMemoryStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := api.NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), store, logger)
+	h := api.NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), policy.NewEngine(), store, logger)
 	router := http.NewServeMux()
 	router.Handle("POST /api/v1/proxies", http.HandlerFunc(h.CreateProxy))
 	router.Handle("GET /api/v1/proxies/{id}", http.HandlerFunc(h.GetProxy))
@@ -169,5 +170,127 @@ func TestProxyCRUD(t *testing.T) {
 	router.ServeHTTP(rec5, req5)
 	if rec5.Code != http.StatusNotFound {
 		t.Fatalf("delete missing: got %d, want 404", rec5.Code)
+	}
+}
+
+func newManagementTestRouter(t *testing.T, adminToken string) (http.Handler, *auth.MemoryKeyStore, *routing.Engine) {
+	t.Helper()
+	cfg, _ := config.Load()
+	cfg.Admin.ManagementToken = adminToken
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ks := auth.NewMemoryKeyStore()
+	eng := routing.NewEngine(nil)
+	mh := api.NewManagementHandler(nil, ks, eng, policy.NewEngine(), proxy.NewMemoryStore(), logger)
+	return api.NewRouterWithManagement(cfg, health.NewHandler(), nil, mh, logger), ks, eng
+}
+
+func TestManagementKeysCRUD(t *testing.T) {
+	rtr, _, _ := newManagementTestRouter(t, "admin-token")
+
+	// Create
+	body := strings.NewReader(`{"name":"prod","rpmlimit":60}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", body)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec := httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST keys: got %d want 201, body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Key string `json:"key"`
+		ID  string `json:"id"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil || created.Key == "" || created.ID == "" {
+		t.Fatalf("expected raw key + id on create, got err=%v body=%s", err, rec.Body.String())
+	}
+
+	// List
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET keys: got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), created.Key) {
+		t.Fatal("raw key must NOT be returned in list")
+	}
+
+	// Update (disable)
+	upd := strings.NewReader(`{"enabled":false}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/keys/"+created.ID, upd)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT key: got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Delete
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/keys/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE key: got %d", rec.Code)
+	}
+
+	// Unauthorized without token
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without admin token, got %d", rec.Code)
+	}
+}
+
+func TestManagementPoliciesRoutes(t *testing.T) {
+	rtr, _, _ := newManagementTestRouter(t, "admin-token")
+
+	// Set global deny
+	body := strings.NewReader(`{"models":["cc-opus"],"providers":["openai"]}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policies", body)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec := httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT policies: got %d", rec.Code)
+	}
+
+	// Read back
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "cc-opus") {
+		t.Fatalf("GET policies: got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Set route alias
+	body = strings.NewReader(`{"targets":["cc-haiku","cc-sonnet"]}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/routes/mytui", body)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT route: got %d", rec.Code)
+	}
+
+	// List routes shows mytui
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/routes", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "mytui") {
+		t.Fatalf("GET routes: got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Delete route
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/routes/mytui", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	rtr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE route: got %d", rec.Code)
 	}
 }

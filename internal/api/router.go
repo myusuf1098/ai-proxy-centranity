@@ -107,6 +107,15 @@ func NewRouterWithTelemetry(
 		getProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetProxy))
 		updateProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.UpdateProxy))
 		deleteProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.DeleteProxy))
+		keysListHandler := adminAuth(http.HandlerFunc(mgmtHandler.ListKeys))
+		keyCreateHandler := adminAuth(http.HandlerFunc(mgmtHandler.CreateKey))
+		keyUpdateHandler := adminAuth(http.HandlerFunc(mgmtHandler.UpdateKey))
+		keyDeleteHandler := adminAuth(http.HandlerFunc(mgmtHandler.DeleteKey))
+		policiesGetHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetPolicies))
+		policiesUpdateHandler := adminAuth(http.HandlerFunc(mgmtHandler.UpdatePolicies))
+		routesListHandler := adminAuth(http.HandlerFunc(mgmtHandler.ListRoutes))
+		routeUpdateHandler := adminAuth(http.HandlerFunc(mgmtHandler.UpdateRoute))
+		routeDeleteHandler := adminAuth(http.HandlerFunc(mgmtHandler.DeleteRoute))
 
 		if mgmtHandler.auditStore != nil {
 			auditFailures := auditAuthFailures(mgmtHandler.auditStore)
@@ -117,6 +126,15 @@ func NewRouterWithTelemetry(
 			getProxyHandler = auditFailures(getProxyHandler)
 			updateProxyHandler = auditFailures(updateProxyHandler)
 			deleteProxyHandler = auditFailures(deleteProxyHandler)
+			keysListHandler = auditFailures(keysListHandler)
+			keyCreateHandler = auditFailures(keyCreateHandler)
+			keyUpdateHandler = auditFailures(keyUpdateHandler)
+			keyDeleteHandler = auditFailures(keyDeleteHandler)
+			policiesGetHandler = auditFailures(policiesGetHandler)
+			policiesUpdateHandler = auditFailures(policiesUpdateHandler)
+			routesListHandler = auditFailures(routesListHandler)
+			routeUpdateHandler = auditFailures(routeUpdateHandler)
+			routeDeleteHandler = auditFailures(routeDeleteHandler)
 		}
 
 		mux.Handle("GET /api/v1/system", systemHandler)
@@ -126,6 +144,18 @@ func NewRouterWithTelemetry(
 		mux.Handle("GET /api/v1/proxies/{id}", getProxyHandler)
 		mux.Handle("PUT /api/v1/proxies/{id}", updateProxyHandler)
 		mux.Handle("DELETE /api/v1/proxies/{id}", deleteProxyHandler)
+		// API key management
+		mux.Handle("GET /api/v1/keys", keysListHandler)
+		mux.Handle("POST /api/v1/keys", keyCreateHandler)
+		mux.Handle("PUT /api/v1/keys/{id}", keyUpdateHandler)
+		mux.Handle("DELETE /api/v1/keys/{id}", keyDeleteHandler)
+		// Global deny policies
+		mux.Handle("GET /api/v1/policies", policiesGetHandler)
+		mux.Handle("PUT /api/v1/policies", policiesUpdateHandler)
+		// Routing aliases
+		mux.Handle("GET /api/v1/routes", routesListHandler)
+		mux.Handle("PUT /api/v1/routes/{alias}", routeUpdateHandler)
+		mux.Handle("DELETE /api/v1/routes/{alias}", routeDeleteHandler)
 	}
 
 	// Root info endpoint
