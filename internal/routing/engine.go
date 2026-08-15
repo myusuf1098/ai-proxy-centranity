@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -48,6 +49,29 @@ func (e *Engine) SetAlias(alias string, targets []string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.aliases[strings.ToLower(alias)] = targets
+}
+
+// GetAliases returns a copy of the alias map (defensive).
+func (e *Engine) GetAliases() map[string][]string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make(map[string][]string, len(e.aliases))
+	for k, v := range e.aliases {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+// DeleteAlias removes an alias (case-insensitive); errors if absent.
+func (e *Engine) DeleteAlias(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := strings.ToLower(name)
+	if _, exists := e.aliases[key]; !exists {
+		return errors.New("alias not found")
+	}
+	delete(e.aliases, key)
+	return nil
 }
 
 // Resolve maps a requested model or alias to a healthy target

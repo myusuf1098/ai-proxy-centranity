@@ -37,6 +37,14 @@ func (e *Engine) SetGlobalDeny(models, providers []string) {
 	e.globalDeny = globalDeny{models: append([]string(nil), models...), providers: append([]string(nil), providers...)}
 }
 
+// GetGlobalDeny returns a copy of the current global denylist.
+func (e *Engine) GetGlobalDeny() (models, providers []string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return append([]string(nil), e.globalDeny.models...),
+		append([]string(nil), e.globalDeny.providers...)
+}
+
 // EvaluateModel checks if the authenticated key is authorized to access the requested model
 func (e *Engine) EvaluateModel(ctx context.Context, key *auth.APIKey, modelID string) Decision {
 	e.mu.RLock()
