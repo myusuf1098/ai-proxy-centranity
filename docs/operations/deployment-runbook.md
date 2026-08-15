@@ -8,7 +8,7 @@ This runbook describes the end-to-end procedure for deploying, upgrading, and mo
 ## 1. Prerequisites
 - Docker Engine 24.0+ and Docker Compose v2.20+
 - Host listening port `8088` (or custom `PG_SERVER_PORT`) available
-- Upstream 9Router accessible at `http://127.0.0.1:20128` (or configured `PG_NINEROUTER_BASE_URL`)
+- Upstream 9Router accessible at `http://127.0.0.1:20128` (or configured `PG_NINEROUTER_URL`)
 - PostgreSQL 16 & Redis 7 containers configured with isolated named volumes
 
 ---
@@ -19,9 +19,11 @@ Copy and configure production secrets from `.env.example`:
 cp .env.example .env
 chmod 600 .env
 # Edit .env and supply secure secrets:
-# PG_DATABASE_PASSWORD=<strong-db-password>
+# PG_DB_PASS=<strong-db-password>
 # PG_NINEROUTER_API_KEY=<valid-9router-bearer-key>
-# PG_ADMIN_ALLOWED_ORIGINS=https://admin.yourdomain.com
+# PG_ADMIN_ALLOWED_ORIGINS=https://admin.yourdomain.com (comma-separated; default *)
+# PG_GLOBAL_DENY_MODELS=model-a,model-b (optional)
+# PG_GLOBAL_DENY_PROVIDERS=provider-x (optional)
 ```
 
 > `PG_DB_PASS` and `PG_ADMIN_TOKEN` are **required** — `docker compose up` fails fast if either is unset in `.env`.
@@ -75,3 +77,10 @@ docker compose run --rm proxygateway-tui
 # Or locally:
 ./bin/proxygateway-tui
 ```
+
+> The TUI service is interactive by design (`tty: true` / `stdin_open: true`).
+> `docker compose run` allocates a TTY; in non-interactive shells (CI,
+> scripts, no attached terminal) pass `-T`:
+> `docker compose run -T --rm proxygateway-tui`. Detached `docker compose up`
+> starts the service headless — attach with `docker attach proxygateway-tui`
+> to interact.

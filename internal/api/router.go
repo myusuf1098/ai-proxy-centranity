@@ -4,12 +4,26 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/telemetry"
 )
+
+// auditAuthFailures wraps a handler and emits an AUTH_FAILURE audit event when it responds 401
+func auditAuthFailures(store audit.Store) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(rw, r)
+			if rw.statusCode == http.StatusUnauthorized {
+				emitAudit(r.Context(), store, audit.EventAuthFailure, "unknown", r.URL.Path, "unauthorized", nil)
+			}
+		})
+	}
+}
 
 // NewRouter initializes HTTP routes without an active upstream adapter (fallback)
 func NewRouter(cfg *config.Config, healthHandler *health.Handler, logger *slog.Logger) http.Handler {
@@ -65,12 +79,18 @@ func NewRouterWithTelemetry(
 
 	// Data Plane routes (/v1/*)
 	if dpHandler != nil {
+		dpHandler.SetMetrics(metrics)
+
 		var listModelsHandler http.Handler = http.HandlerFunc(dpHandler.ListModels)
 		var chatHandler http.Handler = http.HandlerFunc(dpHandler.ChatCompletions)
 
 		if dpHandler.keyStore != nil {
 			listModelsHandler = auth.AuthMiddleware(dpHandler.keyStore)(listModelsHandler)
 			chatHandler = auth.AuthMiddleware(dpHandler.keyStore)(chatHandler)
+		}
+		if dpHandler.auditStore != nil {
+			listModelsHandler = auditAuthFailures(dpHandler.auditStore)(listModelsHandler)
+			chatHandler = auditAuthFailures(dpHandler.auditStore)(chatHandler)
 		}
 
 		mux.Handle("GET /v1/models", listModelsHandler)
@@ -79,9 +99,33 @@ func NewRouterWithTelemetry(
 
 	// Control Plane / Management API routes (/api/v1/*)
 	if mgmtHandler != nil {
-		mux.HandleFunc("GET /api/v1/system", mgmtHandler.GetSystem)
-		mux.HandleFunc("GET /api/v1/overview", mgmtHandler.GetOverview)
-		mux.HandleFunc("GET /api/v1/proxies", mgmtHandler.GetProxies)
+		adminAuth := AdminAuthMiddleware(cfg.Admin.ManagementToken)
+		systemHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetSystem))
+		overviewHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetOverview))
+		proxiesHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetProxies))
+		createProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.CreateProxy))
+		getProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.GetProxy))
+		updateProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.UpdateProxy))
+		deleteProxyHandler := adminAuth(http.HandlerFunc(mgmtHandler.DeleteProxy))
+
+		if mgmtHandler.auditStore != nil {
+			auditFailures := auditAuthFailures(mgmtHandler.auditStore)
+			systemHandler = auditFailures(systemHandler)
+			overviewHandler = auditFailures(overviewHandler)
+			proxiesHandler = auditFailures(proxiesHandler)
+			createProxyHandler = auditFailures(createProxyHandler)
+			getProxyHandler = auditFailures(getProxyHandler)
+			updateProxyHandler = auditFailures(updateProxyHandler)
+			deleteProxyHandler = auditFailures(deleteProxyHandler)
+		}
+
+		mux.Handle("GET /api/v1/system", systemHandler)
+		mux.Handle("GET /api/v1/overview", overviewHandler)
+		mux.Handle("GET /api/v1/proxies", proxiesHandler)
+		mux.Handle("POST /api/v1/proxies", createProxyHandler)
+		mux.Handle("GET /api/v1/proxies/{id}", getProxyHandler)
+		mux.Handle("PUT /api/v1/proxies/{id}", updateProxyHandler)
+		mux.Handle("DELETE /api/v1/proxies/{id}", deleteProxyHandler)
 	}
 
 	// Root info endpoint

@@ -81,6 +81,28 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadAllowedOrigins(t *testing.T) {
+	os.Setenv("PG_ADMIN_ALLOWED_ORIGINS", "a.com,b.com")
+	defer os.Unsetenv("PG_ADMIN_ALLOWED_ORIGINS")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error loading allowed origins, got: %v", err)
+	}
+	if len(cfg.Admin.AllowedOrigins) != 2 || cfg.Admin.AllowedOrigins[0] != "a.com" || cfg.Admin.AllowedOrigins[1] != "b.com" {
+		t.Errorf("expected AllowedOrigins [a.com b.com], got %v", cfg.Admin.AllowedOrigins)
+	}
+
+	os.Unsetenv("PG_ADMIN_ALLOWED_ORIGINS")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("expected no error loading default origins, got: %v", err)
+	}
+	if len(cfg.Admin.AllowedOrigins) != 1 || cfg.Admin.AllowedOrigins[0] != "*" {
+		t.Errorf("expected default AllowedOrigins [*], got %v", cfg.Admin.AllowedOrigins)
+	}
+}
+
 func TestValidationInvalidPort(t *testing.T) {
 	os.Setenv("PG_SERVER_PORT", "999999")
 	defer os.Unsetenv("PG_SERVER_PORT")

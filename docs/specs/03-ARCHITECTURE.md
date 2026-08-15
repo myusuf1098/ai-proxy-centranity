@@ -119,6 +119,11 @@ proxygateway-network
 +-- grafana
 ```
 
+> **Deployed reality (2026-08-15):** Compose ships `postgres`, `redis`,
+> `proxygateway-api`, `proxygateway-tui`. `prometheus` + `grafana` are
+> **planned, not yet deployed** — observability network deferred. Metrics
+> endpoint `/metrics` is available on the API service.
+
 Recommended external exposure:
 
 ``` text

@@ -42,6 +42,20 @@ func TestProfileCredentialRedaction(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDelete(t *testing.T) {
+	s := proxy.NewMemoryStore()
+	p := &proxy.Profile{ID: "p1", Name: "HTTP-01", Type: proxy.TypeHTTP, Host: "h", Port: 8080}
+	if err := s.Save(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(context.Background(), "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(context.Background(), "p1"); err == nil {
+		t.Fatal("expected not-found after delete")
+	}
+}
+
 func TestProfileRegistry(t *testing.T) {
 	store := proxy.NewMemoryStore()
 	ctx := context.Background()
@@ -107,6 +121,24 @@ func TestBuildTransport_HTTPProxy(t *testing.T) {
 	if proxyURL == nil || proxyURL.Host != "127.0.0.1:8080" {
 		t.Errorf("unexpected proxy URL: %v", proxyURL)
 	}
+}
+
+func TestBuildTransportSOCKS5UsesRealDialer(t *testing.T) {
+	profile := &proxy.Profile{
+		ID:   "socks-test",
+		Name: "SOCKS5-01",
+		Type: proxy.TypeSOCKS5,
+		Host: "127.0.0.1",
+		Port: 1080,
+	}
+	tr, err := proxy.BuildTransport(profile)
+	if err != nil {
+		t.Fatalf("BuildTransport: %v", err)
+	}
+	if tr.DialContext == nil {
+		t.Fatal("SOCKS5 transport has no custom DialContext")
+	}
+	// stdlib http.ProxyURL leaves DialContext nil; a real SOCKS5 dialer sets it
 }
 
 func TestCheckHealth_Direct(t *testing.T) {

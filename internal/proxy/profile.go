@@ -36,6 +36,7 @@ type Store interface {
 	Get(ctx context.Context, id string) (*Profile, error)
 	Save(ctx context.Context, profile *Profile) error
 	List(ctx context.Context) ([]*Profile, error)
+	Delete(ctx context.Context, id string) error
 }
 
 // MemoryStore provides thread-safe in-memory proxy profile storage
@@ -69,6 +70,18 @@ func (s *MemoryStore) Save(ctx context.Context, profile *Profile) error {
 	defer s.mu.Unlock()
 
 	s.profiles[profile.ID] = profile
+	return nil
+}
+
+// Delete removes a proxy profile by ID
+func (s *MemoryStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.profiles[id]; !exists {
+		return errors.New("proxy profile not found")
+	}
+	delete(s.profiles, id)
 	return nil
 }
 

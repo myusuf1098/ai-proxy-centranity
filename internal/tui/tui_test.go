@@ -1,8 +1,12 @@
 package tui_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/tui"
@@ -82,5 +86,76 @@ func TestTUINavbarWrapsSixPerRow(t *testing.T) {
 	}
 	if !strings.Contains(row2, "7:ROUTING") || !strings.Contains(row2, "12:SETTINGS") {
 		t.Errorf("row 2 should hold tabs 7-12, got: %q", row2)
+	}
+}
+
+func TestTUIFetchDataSendsAdminToken(t *testing.T) {
+	var mu sync.Mutex
+	gotAuth := []string{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "secret-token")
+
+	done := make(chan tea.Msg, 1)
+	go func() {
+		done <- m.Init()()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData to complete")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(gotAuth) != 2 {
+		t.Fatalf("expected 2 API requests, got %d", len(gotAuth))
+	}
+	for i, auth := range gotAuth {
+		if auth != "Bearer secret-token" {
+			t.Errorf("request %d: expected Authorization header %q, got %q", i, "Bearer secret-token", auth)
+		}
+	}
+}
+
+func TestTUIFetchDataWithoutTokenSendsNoAuth(t *testing.T) {
+	var mu sync.Mutex
+	gotAuth := []string{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	m := tui.NewModel(srv.URL)
+
+	done := make(chan tea.Msg, 1)
+	go func() {
+		done <- m.Init()()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData to complete")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for i, auth := range gotAuth {
+		if auth != "" {
+			t.Errorf("request %d: expected no Authorization header, got %q", i, auth)
+		}
 	}
 }

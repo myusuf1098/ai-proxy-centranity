@@ -10,14 +10,16 @@ This document provides recovery strategies for data loss, corrupted schemas, har
 ### 1.1 PostgreSQL State Backup
 Automated daily logical backup via `pg_dump`:
 ```bash
-docker exec -t pg_postgres pg_dump -U proxygateway proxygateway | gzip > /backups/proxygateway_$(date +%Y%m%d_%H%M%S).sql.gz
+docker exec -t proxygateway-postgres pg_dump -U proxygateway proxygateway | gzip > /backups/proxygateway_$(date +%Y%m%d_%H%M%S).sql.gz
 ```
 
 ### 1.2 Redis Snapshotting
-Redis persistence uses Append-Only File (AOF) + RDB snapshots saved to `pg_redis_data` volume:
-```bash
-docker exec pg_redis redis-cli BGSAVE
-```
+
+> **Note (2026-08-15):** Redis persistence is currently DISABLED in
+> `docker-compose.yml` (`redis-server --save "" --appendonly no`). Rate-limit
+> state is ephemeral by design (PROMT §17: do not back up transient Redis
+> state as primary recovery). Re-enable AOF only if non-transient data moves
+> to Redis.
 
 ---
 
@@ -30,12 +32,12 @@ docker exec pg_redis redis-cli BGSAVE
    ```
 2. Drop and recreate database:
    ```bash
-   docker exec -i pg_postgres psql -U proxygateway -c "DROP DATABASE proxygateway;"
-   docker exec -i pg_postgres psql -U proxygateway -c "CREATE DATABASE proxygateway;"
+   docker exec -i proxygateway-postgres psql -U proxygateway -c "DROP DATABASE proxygateway;"
+   docker exec -i proxygateway-postgres psql -U proxygateway -c "CREATE DATABASE proxygateway;"
    ```
 3. Restore SQL dump:
    ```bash
-   gunzip -c /backups/proxygateway_YYYYMMDD_HHMMSS.sql.gz | docker exec -i pg_postgres psql -U proxygateway -d proxygateway
+   gunzip -c /backups/proxygateway_YYYYMMDD_HHMMSS.sql.gz | docker exec -i proxygateway-postgres psql -U proxygateway -d proxygateway
    ```
 4. Restart API container (auto-migration verifies schema):
    ```bash

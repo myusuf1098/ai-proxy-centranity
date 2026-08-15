@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/myusuf1098/ai-proxy-centranity/internal/api"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/config"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/health"
@@ -84,6 +85,11 @@ func main() {
 	// 5. Initialize Core Engines & Stores
 	keyStore := auth.NewMemoryKeyStore()
 	policyEngine := policy.NewEngine()
+	denyModels := config.GetEnvSlice("PG_GLOBAL_DENY_MODELS", nil)
+	denyProviders := config.GetEnvSlice("PG_GLOBAL_DENY_PROVIDERS", nil)
+	if len(denyModels) > 0 || len(denyProviders) > 0 {
+		policyEngine.SetGlobalDeny(denyModels, denyProviders)
+	}
 	rateLimiter := limiter.NewMemoryLimiter()
 	routeEngine := routing.NewEngine(nil)
 	proxyStore := proxy.NewMemoryStore()
@@ -106,6 +112,9 @@ func main() {
 	)
 
 	// 6. Setup Health Handlers & Router
+	auditStore := audit.NewMemoryStore()
+	dpHandler.SetAuditStore(auditStore)
+	mgmtHandler.SetAuditStore(auditStore)
 	healthHandler := health.NewHandler(healthCheckers...)
 	router := api.NewRouterWithManagement(cfg, healthHandler, dpHandler, mgmtHandler, logger)
 

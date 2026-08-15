@@ -97,7 +97,13 @@ func (m *Metrics) Middleware() func(http.Handler) http.Handler {
 			statusStr := fmt.Sprintf("%d", rec.statusCode)
 
 			m.RequestsTotal.WithLabelValues(r.Method, r.URL.Path, statusStr).Inc()
-			m.RequestDuration.WithLabelValues(r.URL.Path, "").Observe(duration)
+			// Chat handler owns the duration observe for the success path and any
+			// forwarded 4xx (model-labeled); the middleware observes only the
+			// loop's failure classes (5xx/401/429) so failures keep a sample
+			// without double-counting what the handler already observed.
+			if r.URL.Path != "/v1/chat/completions" || rec.statusCode >= http.StatusInternalServerError || rec.statusCode == http.StatusUnauthorized || rec.statusCode == http.StatusTooManyRequests {
+				m.RequestDuration.WithLabelValues(r.URL.Path, "").Observe(duration)
+			}
 		})
 	}
 }

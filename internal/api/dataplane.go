@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myusuf1098/ai-proxy-centranity/internal/audit"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/auth"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/limiter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/ninerouter"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/policy"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/quota"
 	"github.com/myusuf1098/ai-proxy-centranity/internal/routing"
+	"github.com/myusuf1098/ai-proxy-centranity/internal/telemetry"
 )
 
 // DataPlaneHandler serves OpenAI-compatible client endpoints
@@ -25,6 +29,9 @@ type DataPlaneHandler struct {
 	rateLimiter   limiter.RateLimiter
 	routingEngine *routing.Engine
 	logger        *slog.Logger
+	auditStore    audit.Store
+	quotaStore    quota.QuotaStore
+	metrics       *telemetry.Metrics
 }
 
 // NewDataPlaneHandler creates a basic DataPlaneHandler
@@ -67,6 +74,7 @@ func NewDataPlaneHandlerWithRouting(
 		policyEngine:  policyEngine,
 		rateLimiter:   rateLimiter,
 		routingEngine: routingEngine,
+		quotaStore:    quota.NewMemoryQuota(),
 		logger:        logger,
 	}
 }
@@ -105,7 +113,7 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 	models, err := h.adapter.ListModels(ctx)
 	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "failed to retrieve upstream models: "+err.Error(), "upstream_error", "upstream_unavailable")
+		h.writeError(w, http.StatusBadGateway, "failed to retrieve upstream models: "+err.Error(), "upstream_error", ninerouter.ErrUpstreamUnavail)
 		return
 	}
 
@@ -137,6 +145,8 @@ func (h *DataPlaneHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 // ChatCompletions handles POST /v1/chat/completions
 func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 		return
@@ -175,21 +185,33 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if len(parsed.Messages) == 0 {
+		h.writeError(w, http.StatusBadRequest, "field 'messages' is required", "invalid_request_error", "missing_messages")
+		return
+	}
+
 	// 1. Resolve Model Alias & Routing Decision
 	targetModel := parsed.Model
+	var decision *routing.RouteDecision
 	if h.routingEngine != nil {
-		decision, err := h.routingEngine.Resolve(r.Context(), parsed.Model)
+		decision, err = h.routingEngine.Resolve(r.Context(), parsed.Model)
 		if err != nil {
 			h.writeError(w, http.StatusServiceUnavailable, "Routing error: "+err.Error(), "routing_error", "routing_failed")
 			return
 		}
 		targetModel = decision.TargetModel
 	}
+	if decision != nil {
+		h.logAudit(r.Context(), audit.EventRouteResolved, keyIDOrUnknown(r), targetModel, "resolved",
+			map[string]string{"requested": parsed.Model, "strategy": decision.Reason})
+	}
 
 	// 2. Evaluate model policy
 	if key != nil && h.policyEngine != nil {
 		decision := h.policyEngine.EvaluateModel(r.Context(), key, targetModel)
 		if !decision.Allowed {
+			h.logAudit(r.Context(), audit.EventPolicyDeny, keyIDOrUnknown(r), "chat.completions", "forbidden",
+				map[string]string{"model": targetModel})
 			h.writeError(w, http.StatusForbidden, fmt.Sprintf("Access to model '%s' is denied by policy (%s)", targetModel, decision.Reason), "policy_error", "model_not_allowed")
 			return
 		}
@@ -202,7 +224,22 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 		if !allowed {
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())+1))
+			h.logAudit(r.Context(), audit.EventRateLimited, keyIDOrUnknown(r), "chat.completions", "rate_limited",
+				map[string]string{"limit": "rpm"})
 			h.writeError(w, http.StatusTooManyRequests, fmt.Sprintf("Rate limit exceeded (%d RPM). Retry after %v", key.RPMLimit, retryAfter), "rate_limit_error", "rate_limited")
+			return
+		}
+	}
+
+	// 3b. Enforce token quotas
+	if key != nil && h.quotaStore != nil {
+		// Estimate tokens from messages if possible, else conservative 0 (no limit applied)
+		estimated := estimateTokens(parsed.Messages)
+		allowed, dailyRem, monthlyRem := h.quotaStore.Allow(r.Context(), key.ID, key.DailyTokenQuota, key.MonthlyTokenQuota, estimated)
+		w.Header().Set("X-RateLimit-Quota-Daily-Remaining", fmt.Sprintf("%d", dailyRem))
+		w.Header().Set("X-RateLimit-Quota-Monthly-Remaining", fmt.Sprintf("%d", monthlyRem))
+		if !allowed {
+			h.writeError(w, http.StatusTooManyRequests, "Token quota exceeded", "quota_error", "quota_exceeded")
 			return
 		}
 	}
@@ -216,27 +253,91 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// 4. Forward to 9Router adapter
-	resp, err := h.adapter.ForwardChatCompletion(r.Context(), bytes.NewReader(bodyBytes), r.Header)
-	if err != nil {
-		if h.routingEngine != nil {
-			h.routingEngine.RecordResult(targetModel, false)
+	// 4. Forward to 9Router adapter, with fallback on upstream failure
+	targets := []string{targetModel}
+	if decision != nil && len(decision.FallbackChain) > 0 {
+		targets = append(targets, decision.FallbackChain...)
+	}
+
+	var lastResp *http.Response
+	var lastErr error
+	lastStatusCode := 0
+	forwarded := false
+	successModel := targetModel
+
+	for _, t := range targets {
+		// Rewrite model per target
+		payloadMap["model"] = t
+		if updatedBytes, err := json.Marshal(payloadMap); err == nil {
+			bodyBytes = updatedBytes
 		}
-		h.logger.Error("upstream forward failed", slog.Any("error", err), slog.String("request_id", GetRequestID(r.Context())))
-		h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+err.Error(), "upstream_error", "upstream_unavailable")
+
+		resp, err := h.adapter.ForwardChatCompletion(r.Context(), bytes.NewReader(bodyBytes), r.Header)
+		if err != nil {
+			if h.routingEngine != nil {
+				h.routingEngine.RecordResult(t, false)
+			}
+			h.logger.Warn("upstream forward failed, trying fallback", slog.Any("error", err), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
+			lastErr = err
+			lastStatusCode = 0 // transport error: no HTTP status, must not shadow a later mapped code
+			continue
+		}
+
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusTooManyRequests {
+			lastStatusCode = resp.StatusCode
+			if h.metrics != nil {
+				h.metrics.UpstreamErrors.WithLabelValues("9router", upstreamErrorCode(resp.StatusCode)).Inc()
+			}
+			if h.routingEngine != nil {
+				h.routingEngine.RecordResult(t, false)
+			}
+			h.logger.Warn("upstream failure, trying fallback", slog.Int("status", resp.StatusCode), slog.String("model", t), slog.String("request_id", GetRequestID(r.Context())))
+			resp.Body.Close()
+			lastErr = fmt.Errorf("upstream returned %d for %s", resp.StatusCode, t)
+			continue
+		}
+
+		if h.routingEngine != nil {
+			h.routingEngine.RecordResult(t, true)
+		}
+		lastResp = resp
+		forwarded = true
+		successModel = t
+		break
+	}
+
+	if !forwarded {
+		code := ninerouter.ErrUpstreamUnreach
+		if lastStatusCode > 0 {
+			code = upstreamErrorCode(lastStatusCode)
+		}
+		// 5xx/429/401 attempts already incremented per-attempt in the loop; the
+		// summary counts only the transport-error-only case (no HTTP status to
+		// map per-attempt), so all-5xx fail is counted exactly once per target.
+		if h.metrics != nil && lastStatusCode == 0 {
+			h.metrics.UpstreamErrors.WithLabelValues("9router", code).Inc()
+		}
+		if lastErr != nil {
+			h.writeError(w, http.StatusBadGateway, "upstream gateway error: "+lastErr.Error(), "upstream_error", code)
+		} else {
+			h.writeError(w, http.StatusBadGateway, "upstream gateway error", "upstream_error", code)
+		}
 		return
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 500 {
-		if h.routingEngine != nil {
-			h.routingEngine.RecordResult(targetModel, false)
-		}
-	} else {
-		if h.routingEngine != nil {
-			h.routingEngine.RecordResult(targetModel, true)
-		}
+	// Record token usage + latency for the model that actually succeeded
+	if h.metrics != nil {
+		h.metrics.TokensTotal.WithLabelValues(keyIDOrUnknown(r), successModel, "input").Add(float64(estimateTokens(parsed.Messages)))
+		h.metrics.RequestDuration.WithLabelValues("/v1/chat/completions", successModel).Observe(time.Since(startTime).Seconds())
 	}
+
+	// Record token usage for the model that actually succeeded
+	if key != nil && h.quotaStore != nil {
+		h.quotaStore.Record(r.Context(), key.ID, estimateTokens(parsed.Messages))
+	}
+
+	resp := lastResp
+	defer resp.Body.Close()
 
 	contentType := resp.Header.Get("Content-Type")
 	isStream := parsed.Stream || strings.Contains(contentType, "text/event-stream")
@@ -280,6 +381,33 @@ func (h *DataPlaneHandler) ChatCompletions(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// upstreamErrorCode maps an upstream HTTP status to a 9Router contract code
+func upstreamErrorCode(status int) string {
+	switch {
+	case status == http.StatusUnauthorized:
+		return ninerouter.ErrUpstreamAuth
+	case status == http.StatusTooManyRequests:
+		return ninerouter.ErrUpstreamRateLimit
+	case status >= 500:
+		return ninerouter.ErrUpstreamUnavail
+	default:
+		return ninerouter.ErrUpstreamUnavail
+	}
+}
+
+// estimateTokens: rough heuristic, ponytail: chars/4, upgrade when usage API lands
+func estimateTokens(messages []any) int64 {
+	if len(messages) == 0 {
+		return 0
+	}
+	// conservative: count roughly 4 chars per token across serialized messages
+	b, err := json.Marshal(messages)
+	if err != nil {
+		return 0
+	}
+	return int64(len(b) / 4)
+}
+
 func (h *DataPlaneHandler) writeError(w http.ResponseWriter, statusCode int, message, errType, errCode string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -288,4 +416,39 @@ func (h *DataPlaneHandler) writeError(w http.ResponseWriter, statusCode int, mes
 	errObj.Error.Type = errType
 	errObj.Error.Code = errCode
 	_ = json.NewEncoder(w).Encode(errObj)
+}
+
+// SetAuditStore injects the audit trail store
+func (h *DataPlaneHandler) SetAuditStore(s audit.Store) { h.auditStore = s }
+
+// SetMetrics injects the telemetry metrics collectors
+func (h *DataPlaneHandler) SetMetrics(m *telemetry.Metrics) { h.metrics = m }
+
+// logAudit emits an audit event when an audit store is configured
+func (h *DataPlaneHandler) logAudit(ctx context.Context, eventType, actor, target, status string, meta map[string]string) {
+	emitAudit(ctx, h.auditStore, eventType, actor, target, status, meta)
+}
+
+// emitAudit writes an audit event to the store, ignoring nil stores and write errors
+func emitAudit(ctx context.Context, store audit.Store, eventType, actor, target, status string, meta map[string]string) {
+	if store == nil {
+		return
+	}
+	_ = store.Log(ctx, audit.Event{
+		ID:        GenerateAuditID(),
+		Timestamp: time.Now().UTC(),
+		Actor:     actor,
+		EventType: eventType,
+		Target:    target,
+		Status:    status,
+		Metadata:  meta,
+	})
+}
+
+// keyIDOrUnknown returns the authenticated key ID or "unknown" for unauthenticated actors
+func keyIDOrUnknown(r *http.Request) string {
+	if key := auth.GetAPIKey(r.Context()); key != nil {
+		return key.ID
+	}
+	return "unknown"
 }

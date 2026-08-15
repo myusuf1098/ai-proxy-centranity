@@ -10,13 +10,16 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
 	apiURL := "http://127.0.0.1:8088"
-	if err == nil {
+	if val, ok := os.LookupEnv("PG_API_BASE_URL"); ok {
+		apiURL = val
+	} else if cfg, err := config.Load(); err == nil {
 		apiURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port)
 	}
 
-	model := tui.NewModel(apiURL)
+	adminToken := os.Getenv("PG_ADMIN_TOKEN")
+
+	model := tui.NewModelWithToken(apiURL, adminToken)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
