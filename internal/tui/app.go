@@ -3,7 +3,9 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,6 +47,13 @@ type Model struct {
 	client        *http.Client
 	systemStatus  map[string]interface{}
 	overview      map[string]interface{}
+	keys          []map[string]interface{}
+	policies      map[string]interface{}
+	routes        map[string][]string
+	proxies       []map[string]interface{}
+	form          *FormState
+	selected      int
+	confirm       string // pending destructive-action label awaiting y/N
 	lastRefreshed time.Time
 	err           error
 }
@@ -82,18 +91,84 @@ func (m Model) ActiveTab() Tab {
 type dataLoadedMsg struct {
 	systemStatus map[string]interface{}
 	overview     map[string]interface{}
+	keys         []map[string]interface{}
+	policies     map[string]interface{}
+	routes       map[string][]string
+	proxies      []map[string]interface{}
 	err          error
 }
 
-func (m Model) get(path string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s%s", m.apiURL, path), nil)
+// Do issues an authenticated request. body is raw JSON ("" for GET/DELETE).
+func (m Model) Do(method, path, body string) (*http.Response, error) {
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, fmt.Sprintf("%s%s", m.apiURL, path), reader)
 	if err != nil {
 		return nil, err
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if m.adminToken != "" {
 		req.Header.Set("Authorization", "Bearer "+m.adminToken)
 	}
 	return m.client.Do(req)
+}
+
+func (m Model) get(path string) (*http.Response, error) {
+	return m.Do(http.MethodGet, path, "")
+}
+
+func (m Model) getKeys() []map[string]interface{} {
+	resp, err := m.get("/api/v1/keys")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Keys []map[string]interface{} `json:"keys"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out.Keys
+}
+
+func (m Model) getPolicies() map[string]interface{} {
+	resp, err := m.get("/api/v1/policies")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out map[string]interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out
+}
+
+func (m Model) getRoutes() map[string][]string {
+	resp, err := m.get("/api/v1/routes")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Routes map[string][]string `json:"routes"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out.Routes
+}
+
+func (m Model) getProxies() []map[string]interface{} {
+	resp, err := m.get("/api/v1/proxies")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Proxies []map[string]interface{} `json:"proxies"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out.Proxies
 }
 
 func (m Model) fetchData() tea.Msg {
@@ -115,6 +190,10 @@ func (m Model) fetchData() tea.Msg {
 	return dataLoadedMsg{
 		systemStatus: sys,
 		overview:     over,
+		keys:         m.getKeys(),
+		policies:     m.getPolicies(),
+		routes:       m.getRoutes(),
+		proxies:      m.getProxies(),
 		err:          err,
 	}
 }
@@ -141,11 +220,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.overview != nil {
 			m.overview = msg.overview
 		}
+		if msg.keys != nil {
+			m.keys = msg.keys
+		}
+		if msg.policies != nil {
+			m.policies = msg.policies
+		}
+		if msg.routes != nil {
+			m.routes = msg.routes
+		}
+		if msg.proxies != nil {
+			m.proxies = msg.proxies
+		}
 		m.lastRefreshed = time.Now()
 		m.err = msg.err
 		return m, nil
 
 	case tea.KeyMsg:
+		// Modal/form and destructive-confirmation states take precedence
+		// over normal navigation.
+		if m.form != nil {
+			return m.handleFormKey(msg)
+		}
+		if m.confirm != "" {
+			return m.handleConfirmKey(msg)
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -189,10 +289,256 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = TabSystem
 		case "=":
 			m.activeTab = TabSettings
+
+		case "a":
+			m = m.openCreateForm()
+		case "e":
+			m = m.openEditForm()
+		case "d":
+			if m.isManagementTab() {
+				m.confirm = "delete"
+			}
+		case "x":
+			if m.canToggle() {
+				m.confirm = "toggle"
+			}
 		}
 	}
 
 	return m, nil
+}
+
+// handleFormKey routes keystrokes while a modal form is open.
+func (m Model) handleFormKey(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch km.String() {
+	case "esc":
+		m.form = nil
+	case "tab":
+		m.form.NextFocus()
+	case "shift+tab":
+		m.form.PrevFocus()
+	case "enter":
+		m.form.Submit()
+		m.form = nil
+		return m, func() tea.Msg { return m.fetchData() }
+	default:
+		if len(m.form.Fields) == 0 {
+			return m, nil
+		}
+		for _, r := range km.Runes {
+			m.form.Fields[m.form.Focused].Value += string(r)
+		}
+	}
+	return m, nil
+}
+
+// handleConfirmKey routes y/N for pending destructive actions.
+func (m Model) handleConfirmKey(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch km.String() {
+	case "y", "Y":
+		m.doConfirmAction()
+		m.confirm = ""
+		return m, func() tea.Msg { return m.fetchData() }
+	case "n", "N", "esc":
+		m.confirm = ""
+	}
+	return m, nil
+}
+
+// resourceList returns the rows for the active management screen.
+func (m Model) resourceList() []map[string]interface{} {
+	switch m.activeTab {
+	case TabProxies:
+		return m.proxies
+	case TabKeys:
+		return m.keys
+	case TabRouting:
+		// Sorted so the row order matches renderRouting: the `selected`
+		// cursor, delete/toggle targets, and edit pre-fill all hit the same
+		// alias. This is the single source of truth for routing row order.
+		aliases := make([]string, 0, len(m.routes))
+		for alias := range m.routes {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		out := make([]map[string]interface{}, 0, len(aliases))
+		for _, alias := range aliases {
+			out = append(out, map[string]interface{}{"alias": alias, "targets": m.routes[alias]})
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// resourceID returns the identifier of the selected row for the active screen.
+func (m Model) resourceID() string {
+	list := m.resourceList()
+	if len(list) == 0 {
+		return ""
+	}
+	row := list[m.selected]
+	if m.activeTab == TabRouting {
+		id, _ := row["alias"].(string)
+		return id
+	}
+	id, _ := row["id"].(string)
+	return id
+}
+
+// selectedEnabled reports whether the selected row is currently enabled.
+func (m Model) selectedEnabled() bool {
+	list := m.resourceList()
+	if len(list) == 0 {
+		return false
+	}
+	enabled, _ := list[m.selected]["enabled"].(bool)
+	return enabled
+}
+
+// isManagementTab reports whether the active screen supports actions.
+func (m Model) isManagementTab() bool {
+	switch m.activeTab {
+	case TabProxies, TabKeys, TabPolicies, TabRouting:
+		return true
+	}
+	return false
+}
+
+// canToggle reports whether the active screen supports enable/disable toggle.
+// ROUTING has no enable/disable state (aliases are deleted, not disabled), so
+// the x key is a no-op there rather than arming a dead confirmation.
+func (m Model) canToggle() bool {
+	switch m.activeTab {
+	case TabProxies, TabKeys:
+		return true
+	}
+	return false
+}
+
+// openCreateForm opens an add form for the active management screen and
+// returns the model with the form attached.
+func (m Model) openCreateForm() Model {
+	if !m.isManagementTab() {
+		return m
+	}
+	switch m.activeTab {
+	case TabProxies:
+		m.form = NewFormState("Add Proxy", []FormField{{Label: "Name"}, {Label: "Host"}, {Label: "Port"}, {Label: "Type"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"name":%q,"host":%q,"port":%s,"type":%q}`, v["Name"], v["Host"], v["Port"], v["Type"])
+			m.Do(http.MethodPost, "/api/v1/proxies", body)
+		})
+	case TabKeys:
+		m.form = NewFormState("Add Key", []FormField{{Label: "Name"}, {Label: "RPMLimit"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"name":%q,"rpmlimit":%s}`, v["Name"], v["RPMLimit"])
+			m.Do(http.MethodPost, "/api/v1/keys", body)
+		})
+	case TabPolicies:
+		m.form = NewFormState("Set Global Deny", []FormField{{Label: "Models"}, {Label: "Providers"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"models":[%q],"providers":[%q]}`, v["Models"], v["Providers"])
+			m.Do(http.MethodPut, "/api/v1/policies", body)
+		})
+	case TabRouting:
+		m.form = NewFormState("Add Route", []FormField{{Label: "Alias"}, {Label: "Targets"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"targets":[%q]}`, v["Targets"])
+			m.Do(http.MethodPut, "/api/v1/routes/"+v["Alias"], body)
+		})
+	}
+	return m
+}
+
+// openEditForm opens a pre-filled form for the selected row and returns the
+// model with the form attached.
+func (m Model) openEditForm() Model {
+	if !m.isManagementTab() {
+		return m
+	}
+	if m.activeTab == TabPolicies {
+		return m.openCreateForm() // policies have a single global set form
+	}
+	id := m.resourceID()
+	if id == "" {
+		return m
+	}
+	list := m.resourceList()
+	row := list[m.selected]
+
+	str := func(k string) string {
+		s, _ := row[k].(string)
+		return s
+	}
+	num := func(k string) string {
+		if f, ok := row[k].(float64); ok && f > 0 {
+			return fmt.Sprintf("%d", int(f))
+		}
+		return ""
+	}
+
+	switch m.activeTab {
+	case TabProxies:
+		m.form = NewFormState("Edit Proxy", []FormField{{Label: "Name"}, {Label: "Host"}, {Label: "Port"}, {Label: "Type"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"name":%q,"host":%q,"port":%s,"type":%q}`, v["Name"], v["Host"], v["Port"], v["Type"])
+			m.Do(http.MethodPut, "/api/v1/proxies/"+id, body)
+		})
+		m.form.SetValue(0, str("name"))
+		m.form.SetValue(1, str("host"))
+		m.form.SetValue(2, num("port"))
+		m.form.SetValue(3, str("type"))
+	case TabKeys:
+		m.form = NewFormState("Edit Key", []FormField{{Label: "Name"}, {Label: "RPMLimit"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"name":%q,"rpmlimit":%s}`, v["Name"], v["RPMLimit"])
+			m.Do(http.MethodPut, "/api/v1/keys/"+id, body)
+		})
+		m.form.SetValue(0, str("name"))
+		m.form.SetValue(1, num("rpm_limit"))
+	case TabRouting:
+		m.form = NewFormState("Edit Route", []FormField{{Label: "Alias"}, {Label: "Targets"}}, func(v map[string]string) {
+			body := fmt.Sprintf(`{"targets":[%q]}`, v["Targets"])
+			m.Do(http.MethodPut, "/api/v1/routes/"+id, body)
+		})
+		alias, _ := row["alias"].(string)
+		m.form.SetValue(0, alias)
+		if targets, ok := row["targets"].([]string); ok {
+			m.form.SetValue(1, strings.Join(targets, ","))
+		}
+	}
+	return m
+}
+
+// doConfirmAction executes the pending destructive action on the selected row.
+func (m Model) doConfirmAction() {
+	id := m.resourceID()
+	if id == "" {
+		return
+	}
+	switch m.activeTab {
+	case TabProxies:
+		if m.confirm == "delete" {
+			m.Do(http.MethodDelete, "/api/v1/proxies/"+id, "")
+		} else if m.confirm == "toggle" {
+			body := fmt.Sprintf(`{"enabled":%t}`, !m.selectedEnabled())
+			m.Do(http.MethodPut, "/api/v1/proxies/"+id, body)
+		}
+	case TabKeys:
+		if m.confirm == "delete" {
+			m.Do(http.MethodDelete, "/api/v1/keys/"+id, "")
+		} else if m.confirm == "toggle" {
+			body := fmt.Sprintf(`{"enabled":%t}`, !m.selectedEnabled())
+			m.Do(http.MethodPut, "/api/v1/keys/"+id, body)
+		}
+	case TabRouting:
+		if m.confirm == "delete" {
+			m.Do(http.MethodDelete, "/api/v1/routes/"+id, "")
+		}
+	}
 }
 
 // View renders the complete TUI layout
@@ -239,7 +585,7 @@ func (m Model) View() string {
 	b.WriteString("\n")
 
 	// 4. Bottom Status & Shortcuts Footer
-	footerContent := fmt.Sprintf("q: Quit | Tab: Next Tab | 1-0: Jump Screen | r: Refresh | Connected: %s", m.apiURL)
+	footerContent := fmt.Sprintf("q: Quit | Tab: Next Tab | 1-0: Jump Screen | r: Refresh | a: Add | e: Edit | d: Delete | x: Toggle | Connected: %s", m.apiURL)
 	footer := footerStyle.Width(m.width).Render(footerContent)
 	b.WriteString(footer)
 
@@ -247,34 +593,49 @@ func (m Model) View() string {
 }
 
 func (m Model) renderActiveScreen() string {
+	var content string
 	switch m.activeTab {
 	case TabOverview:
-		return m.renderOverview()
+		content = m.renderOverview()
 	case TabRequests:
-		return m.renderRequests()
+		content = m.renderRequests()
 	case TabModels:
-		return m.renderModels()
+		content = m.renderModels()
 	case TabProviders:
-		return m.renderProviders()
+		content = m.renderProviders()
 	case TabKeys:
-		return m.renderKeys()
+		content = m.renderKeys()
 	case TabPolicies:
-		return m.renderPolicies()
+		content = m.renderPolicies()
 	case TabRouting:
-		return m.renderRouting()
+		content = m.renderRouting()
 	case TabProxies:
-		return m.renderProxies()
+		content = m.renderProxies()
 	case TabUsage:
-		return m.renderUsage()
+		content = m.renderUsage()
 	case TabAudit:
-		return m.renderAudit()
+		content = m.renderAudit()
 	case TabSystem:
-		return m.renderSystem()
+		content = m.renderSystem()
 	case TabSettings:
-		return m.renderSettings()
+		content = m.renderSettings()
 	default:
-		return "Screen under construction."
+		content = "Screen under construction."
 	}
+
+	if m.form != nil {
+		content += "\n" + FormView(m.form)
+	} else if m.confirm != "" {
+		action := "run this action"
+		switch m.confirm {
+		case "delete":
+			action = "delete the selected record"
+		case "toggle":
+			action = "toggle enable/disable for the selected record"
+		}
+		content += fmt.Sprintf("\n\n⚠ Confirm %s? [y/N]", action)
+	}
+	return content
 }
 
 func (m Model) renderOverview() string {
@@ -321,39 +682,113 @@ func (m Model) renderProviders() string {
 		"OpenAI         https://api.openai.com   " + badgeGreen.Render("HEALTHY") + "     60s       DIRECT\n"
 }
 
+// fieldNum extracts a numeric field from a JSON-decoded row (float64 from
+// encoding/json); returns 0 when absent or non-numeric.
+func fieldNum(row map[string]interface{}, key string) float64 {
+	if f, ok := row[key].(float64); ok {
+		return f
+	}
+	return 0
+}
+
 func (m Model) renderKeys() string {
-	return lipgloss.NewStyle().Bold(true).Render("🔑 API KEYS & IDENTITIES") + "\n\n" +
-		"KEY ID            NAME             PREFIX        RPM   STATUS     EXPIRES\n" +
-		"-----------------------------------------------------------------------------\n" +
-		"key_8f192b4       Production Svc   sk-pg-8f19    60    " + badgeGreen.Render("ACTIVE") + "     Never\n" +
-		"key_3a918e2       Developer Test   sk-pg-3a91    30    " + badgeGreen.Render("ACTIVE") + "     2027-01-01\n"
+	var s strings.Builder
+	s.WriteString(lipgloss.NewStyle().Bold(true).Render("🔑 API KEYS & IDENTITIES") + "\n\n")
+	if len(m.keys) == 0 {
+		s.WriteString("No records\n")
+		return s.String()
+	}
+	s.WriteString("KEY ID            NAME             PREFIX        RPM   STATUS\n")
+	s.WriteString("------------------------------------------------------------------------\n")
+	for i, k := range m.keys {
+		sel := "  "
+		if i == m.selected {
+			sel = "> "
+		}
+		id, _ := k["id"].(string)
+		name, _ := k["name"].(string)
+		prefix, _ := k["prefix"].(string)
+		rpm := fmt.Sprintf("%d", int(fieldNum(k, "rpm_limit")))
+		status := badgeGreen.Render("ACTIVE")
+		if enabled, ok := k["enabled"].(bool); ok && !enabled {
+			status = "DISABLED"
+		}
+		s.WriteString(fmt.Sprintf("%s%-18s %-16s %-12s %-6s %s\n", sel, id, name, prefix, rpm, status))
+	}
+	return s.String()
 }
 
 func (m Model) renderPolicies() string {
-	return lipgloss.NewStyle().Bold(true).Render("🛡️ POLICY ENGINE (PRECEDENCE: DENY > ALLOW)") + "\n\n" +
-		"SCOPE          RULE TYPE       TARGET            DECISION   ENFORCEMENT\n" +
-		"--------------------------------------------------------------------------\n" +
-		"Global         Safety          harmful-*         DENY       Strict\n" +
-		"Key: key_8f    Model Allow     cc-*, gemini-*    ALLOW      Enforced\n" +
-		"Key: key_3a    Model Deny      cc-opus           DENY       Enforced\n"
+	var s strings.Builder
+	s.WriteString(lipgloss.NewStyle().Bold(true).Render("🛡️ POLICY ENGINE (PRECEDENCE: DENY > ALLOW)") + "\n\n")
+	models, _ := m.policies["models"].([]interface{})
+	providers, _ := m.policies["providers"].([]interface{})
+	if len(models) == 0 && len(providers) == 0 {
+		s.WriteString("No records\n")
+		return s.String()
+	}
+	s.WriteString("SCOPE          RULE TYPE       TARGET            DECISION   ENFORCEMENT\n")
+	s.WriteString("--------------------------------------------------------------------------\n")
+	for _, mdl := range models {
+		s.WriteString(fmt.Sprintf("%-15s %-16s %-18v %-10s %s\n", "Global", "Model Deny", mdl, "DENY", "Strict"))
+	}
+	for _, prv := range providers {
+		s.WriteString(fmt.Sprintf("%-15s %-16s %-18v %-10s %s\n", "Global", "Provider Deny", prv, "DENY", "Strict"))
+	}
+	return s.String()
 }
 
 func (m Model) renderRouting() string {
-	return lipgloss.NewStyle().Bold(true).Render("🔀 INTELLIGENT ROUTING & ALIASES") + "\n\n" +
-		"ALIAS        TARGET RESOLUTION CHAIN                  CIRCUIT STATE\n" +
-		"------------------------------------------------------------------------\n" +
-		"coding   ➔   1. cc-sonnet, 2. cc-haiku                " + badgeGreen.Render("CLOSED (Healthy)") + "\n" +
-		"fast     ➔   1. cc-haiku, 2. gemini-flash             " + badgeGreen.Render("CLOSED (Healthy)") + "\n" +
-		"reasoning➔   1. cc-opus, 2. cc-sonnet                 " + badgeGreen.Render("CLOSED (Healthy)") + "\n" +
-		"cheap    ➔   1. cc-haiku                              " + badgeGreen.Render("CLOSED (Healthy)") + "\n"
+	var s strings.Builder
+	s.WriteString(lipgloss.NewStyle().Bold(true).Render("🔀 INTELLIGENT ROUTING & ALIASES") + "\n\n")
+	if len(m.routes) == 0 {
+		s.WriteString("No records\n")
+		return s.String()
+	}
+	s.WriteString("ALIAS        TARGET RESOLUTION CHAIN                  CIRCUIT STATE\n")
+	s.WriteString("------------------------------------------------------------------------\n")
+	for i, row := range m.resourceList() {
+		sel := "  "
+		if i == m.selected {
+			sel = "> "
+		}
+		alias, _ := row["alias"].(string)
+		targets, _ := row["targets"].([]string)
+		chain := "1. " + strings.Join(targets, ", ")
+		s.WriteString(fmt.Sprintf("%s%-11s ➔   %-36s %s\n", sel, alias, chain, badgeGreen.Render("CLOSED (Healthy)")))
+	}
+	return s.String()
 }
 
 func (m Model) renderProxies() string {
-	return lipgloss.NewStyle().Bold(true).Render("🌐 OUTBOUND PROXY PROFILES") + "\n\n" +
-		"PROFILE ID        TYPE      HOST:PORT              STATUS     CREDENTIALS\n" +
-		"-----------------------------------------------------------------------------\n" +
-		"proxy_direct      DIRECT    -                      " + badgeGreen.Render("ACTIVE") + "     [None Required]\n" +
-		"proxy_socks5_us   SOCKS5    proxy.example.com:1080 " + badgeGreen.Render("ACTIVE") + "     [REDACTED/SECURE]\n"
+	var s strings.Builder
+	s.WriteString(lipgloss.NewStyle().Bold(true).Render("🌐 OUTBOUND PROXY PROFILES") + "\n\n")
+	if len(m.proxies) == 0 {
+		s.WriteString("No records\n")
+		return s.String()
+	}
+	s.WriteString("PROFILE ID        TYPE      HOST:PORT              STATUS\n")
+	s.WriteString("------------------------------------------------------------------------\n")
+	for i, p := range m.proxies {
+		sel := "  "
+		if i == m.selected {
+			sel = "> "
+		}
+		id, _ := p["id"].(string)
+		typ, _ := p["type"].(string)
+		host, _ := p["host"].(string)
+		port := int(fieldNum(p, "port"))
+		hostPort := fmt.Sprintf("%s:%d", host, port)
+		if host == "" {
+			hostPort = "-"
+		}
+		status := badgeGreen.Render("ACTIVE")
+		if enabled, ok := p["enabled"].(bool); ok && !enabled {
+			status = "DISABLED"
+		}
+		s.WriteString(fmt.Sprintf("%s%-16s %-9s %-22s %s\n", sel, id, typ, hostPort, status))
+	}
+	return s.String()
 }
 
 func (m Model) renderUsage() string {

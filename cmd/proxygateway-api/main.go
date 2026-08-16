@@ -107,6 +107,7 @@ func main() {
 		nineRouterAdapter,
 		keyStore,
 		routeEngine,
+		policyEngine,
 		proxyStore,
 		logger,
 	)

@@ -74,7 +74,7 @@ func TestManagementAuthFailureAudited(t *testing.T) {
 	auditStore := audit.NewMemoryStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	mgmt := NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), nil, logger)
+	mgmt := NewManagementHandler(nil, auth.NewMemoryKeyStore(), routing.NewEngine(nil), policy.NewEngine(), nil, logger)
 	mgmt.SetAuditStore(auditStore)
 
 	cfg, _ := config.Load()

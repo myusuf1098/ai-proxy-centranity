@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,13 +117,40 @@ func TestTUIFetchDataSendsAdminToken(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(gotAuth) != 2 {
-		t.Fatalf("expected 2 API requests, got %d", len(gotAuth))
+	if len(gotAuth) != 6 {
+		t.Fatalf("expected 6 API requests, got %d", len(gotAuth))
 	}
 	for i, auth := range gotAuth {
 		if auth != "Bearer secret-token" {
 			t.Errorf("request %d: expected Authorization header %q, got %q", i, "Bearer secret-token", auth)
 		}
+	}
+}
+
+func TestTUIPostSendsAdminToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			t.Errorf("expected auth header, got %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected JSON content-type, got %q", r.Header.Get("Content-Type"))
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"key":"sk-raw","id":"key_1"}`))
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "secret-token")
+	resp, err := m.Do(http.MethodPost, "/api/v1/keys", `{"name":"x"}`)
+	if err != nil {
+		t.Fatalf("Do returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("expected 201, got %d", resp.StatusCode)
 	}
 }
 
@@ -157,5 +185,277 @@ func TestTUIFetchDataWithoutTokenSendsNoAuth(t *testing.T) {
 		if auth != "" {
 			t.Errorf("request %d: expected no Authorization header, got %q", i, auth)
 		}
+	}
+}
+
+// TestTUIProxyAddSubmitsPost verifies the action wiring: pressing the add
+// action key (a) opens a modal form, filling fields + Enter submits, and the
+// form's OnSubmit issues POST /api/v1/proxies.
+func TestTUIProxyAddSubmitsPost(t *testing.T) {
+	var mu sync.Mutex
+	var gotMethod, gotPath, gotBody string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "token")
+
+	// Go to PROXIES tab, then press 'a' to open the Add Proxy form.
+	var updated tea.Model
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("8")})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = updated.(tui.Model)
+
+	// Fill the four fields: name, host, port, type.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p1")})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h1")})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("8080")})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("HTTP")})
+	m = updated.(tui.Model)
+
+	// Submit.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotMethod != http.MethodPost || gotPath != "/api/v1/proxies" {
+		t.Fatalf("expected POST /api/v1/proxies, got %s %s body=%s", gotMethod, gotPath, gotBody)
+	}
+	if !strings.Contains(gotBody, `"name":"p1"`) || !strings.Contains(gotBody, `"host":"h1"`) {
+		t.Fatalf("expected name/host in body, got %s", gotBody)
+	}
+}
+
+// TestTUIProxiesDeleteRequiresConfirm verifies destructive actions gate on
+// y/N confirmation: pressing 'd' alone issues no request; 'n' cancels; 'y'
+// executes DELETE /api/v1/proxies/{id} on the selected row.
+func TestTUIProxiesDeleteRequiresConfirm(t *testing.T) {
+	var mu sync.Mutex
+	var delMethod, delPath string
+	delReqs := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method == http.MethodDelete {
+			delReqs++
+			delMethod, delPath = r.Method, r.URL.Path
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v1/proxies":
+			w.Write([]byte(`{"proxies":[{"id":"proxy_1","name":"direct","type":"DIRECT","host":"","port":0,"enabled":true}]}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "token")
+
+	// Load live data (populates m.proxies via the dataLoadedMsg path).
+	done := make(chan tea.Msg, 1)
+	go func() { done <- m.Init()() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData")
+	}
+	var updated tea.Model
+	updated, _ = m.Update(msg)
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("8")}) // PROXIES
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}) // delete -> confirm
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	got := delReqs
+	mu.Unlock()
+	if got != 0 {
+		t.Fatalf("expected no delete request after 'd', got %d", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}) // cancel
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	got = delReqs
+	mu.Unlock()
+	if got != 0 {
+		t.Fatalf("expected no delete request after 'n', got %d", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}) // delete again
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}) // confirm
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if delMethod != http.MethodDelete || delPath != "/api/v1/proxies/proxy_1" {
+		t.Fatalf("expected DELETE /api/v1/proxies/proxy_1 after y, got %s %s", delMethod, delPath)
+	}
+}
+
+// TestTUILiveRenderNoRecords verifies renderers show "No records" instead of
+// hardcoded sample rows when no data has been fetched.
+func TestTUILiveRenderNoRecords(t *testing.T) {
+	m := tui.NewModel("http://127.0.0.1:8088")
+	var updated tea.Model
+
+	// PROXIES tab (key 8)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("8")})
+	m = updated.(tui.Model)
+	if view := m.View(); !strings.Contains(view, "No records") {
+		t.Fatalf("expected 'No records' on empty PROXIES screen, got: %s", view)
+	}
+
+	// KEYS tab (key 5)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("5")})
+	m = updated.(tui.Model)
+	if view := m.View(); !strings.Contains(view, "No records") {
+		t.Fatalf("expected 'No records' on empty KEYS screen, got: %s", view)
+	}
+
+	// ROUTING tab (key 7)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")})
+	m = updated.(tui.Model)
+	if view := m.View(); !strings.Contains(view, "No records") {
+		t.Fatalf("expected 'No records' on empty ROUTING screen, got: %s", view)
+	}
+}
+
+// TestTUIRoutingDeleteTargetsSortedAlias verifies the routing delete target
+// matches the row the `>` cursor highlights: with multiple routes the model
+// sorts aliases so the renderer and the delete path share one order.
+func TestTUIRoutingDeleteTargetsSortedAlias(t *testing.T) {
+	var mu sync.Mutex
+	var delPath string
+	delReqs := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method == http.MethodDelete {
+			delReqs++
+			delPath = r.URL.Path
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v1/routes":
+			w.Write([]byte(`{"routes":{"beta":["m2"],"alpha":["m1"]}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "token")
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- m.Init()() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData")
+	}
+	var updated tea.Model
+	updated, _ = m.Update(msg)
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")}) // ROUTING
+	m = updated.(tui.Model)
+
+	// The `>` cursor marks the first row; confirm it is the first sorted alias.
+	if view := m.View(); !strings.Contains(view, "> alpha") {
+		t.Fatalf("expected cursor on first sorted alias 'alpha', got:\n%s", view)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}) // delete -> confirm
+	m = updated.(tui.Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}) // confirm
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if delReqs != 1 || delPath != "/api/v1/routes/alpha" {
+		t.Fatalf("expected DELETE /api/v1/routes/alpha after y, got %d requests last=%s", delReqs, delPath)
+	}
+}
+
+// TestTUIRoutingToggleNoOp verifies the x key does not arm a confirmation on
+// the ROUTING screen (aliases have no enable/disable state): pressing x then y
+// issues no write request and no confirm prompt is rendered.
+func TestTUIRoutingToggleNoOp(t *testing.T) {
+	var mu sync.Mutex
+	writes := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method != http.MethodGet {
+			writes++
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v1/routes":
+			w.Write([]byte(`{"routes":{"alpha":["m1"]}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	m := tui.NewModelWithToken(srv.URL, "token")
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- m.Init()() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fetchData")
+	}
+	var updated tea.Model
+	updated, _ = m.Update(msg)
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")}) // ROUTING
+	m = updated.(tui.Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")}) // toggle -> must NOT arm confirm
+	m = updated.(tui.Model)
+
+	if view := m.View(); strings.Contains(view, "Confirm") {
+		t.Fatalf("expected no confirm prompt after x on ROUTING, got:\n%s", view)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}) // would confirm if armed
+	m = updated.(tui.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if writes != 0 {
+		t.Fatalf("expected no write request after x+y on ROUTING, got %d", writes)
 	}
 }

@@ -86,6 +86,9 @@ func GenerateAPIKey(name string) (string, *APIKey, error) {
 type KeyStore interface {
 	GetByHash(ctx context.Context, hash string) (*APIKey, error)
 	Create(ctx context.Context, key *APIKey) error
+	List(ctx context.Context) ([]*APIKey, error)
+	Update(ctx context.Context, key *APIKey) error
+	Delete(ctx context.Context, hash string) error
 }
 
 // MemoryKeyStore provides in-memory thread-safe storage for API keys
@@ -119,6 +122,40 @@ func (s *MemoryKeyStore) Create(ctx context.Context, key *APIKey) error {
 	defer s.mu.Unlock()
 
 	s.keys[key.Hash] = key
+	return nil
+}
+
+// List returns a shallow copy of all keys (defensive: callers may mutate).
+func (s *MemoryKeyStore) List(ctx context.Context) ([]*APIKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*APIKey, 0, len(s.keys))
+	for _, k := range s.keys {
+		cp := *k
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+// Update overwrites a key by hash; errors if absent.
+func (s *MemoryKeyStore) Update(ctx context.Context, key *APIKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.keys[key.Hash]; !exists {
+		return errors.New("api key not found")
+	}
+	s.keys[key.Hash] = key
+	return nil
+}
+
+// Delete removes a key by hash; errors if absent.
+func (s *MemoryKeyStore) Delete(ctx context.Context, hash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.keys[hash]; !exists {
+		return errors.New("api key not found")
+	}
+	delete(s.keys, hash)
 	return nil
 }
 

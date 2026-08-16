@@ -105,5 +105,9 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches â†’ PR â†
 - `CLAUDE.md` + `AGENTS.md` repository guides added at repo root (adapted from global `/home/infinity/.claude/CLAUDE.md` + `/opt/rys-centranity/AGENTS.md`)
 - Compliance-audit implementation plans (`docs/superpowers/plans/`)
 
+### TUI Management Write (FR-012)
+- Backend: management routes for API keys (`/api/v1/keys` CRUD), global-deny policies (`/api/v1/policies` GET/PUT), routing aliases (`/api/v1/routes` GET/PUT/DELETE), all under AdminAuthMiddleware; raw key returned once on create.
+- TUI: modal form engine (`internal/tui/form.go`); add/edit/delete/toggle actions on PROXIES, API KEYS, POLICIES, ROUTING screens; destructive actions require `y/N` confirmation; live data replaces hardcoded sample rows.
+
 ## Note
 The 12-phase roadmap contract lives in `docs/specs/PROMT.md` (PG-CONTRACT-000 v2.1); master delivery scorecard in `docs/PROJECT-COMPLETION-REPORT.md`.
