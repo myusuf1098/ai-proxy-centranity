@@ -7,7 +7,7 @@ This runbook describes the end-to-end procedure for deploying, upgrading, and mo
 
 ## 1. Prerequisites
 - Docker Engine 24.0+ and Docker Compose v2.20+
-- Host listening port `8088` (or custom `PG_SERVER_PORT`) available
+- Host loopback port `127.0.0.1:8088` available
 - Upstream 9Router accessible at `http://127.0.0.1:20128` (or configured `PG_NINEROUTER_URL`)
 - PostgreSQL 16 & Redis 7 containers configured with isolated named volumes
 
@@ -21,12 +21,15 @@ chmod 600 .env
 # Edit .env and supply secure secrets:
 # PG_DB_PASS=<strong-db-password>
 # PG_NINEROUTER_API_KEY=<valid-9router-bearer-key>
-# PG_ADMIN_ALLOWED_ORIGINS=https://admin.yourdomain.com (comma-separated; default *)
+# PG_ADMIN_ALLOWED_ORIGINS=https://portal.example.com,https://monitor.example.com
 # PG_GLOBAL_DENY_MODELS=model-a,model-b (optional)
 # PG_GLOBAL_DENY_PROVIDERS=provider-x (optional)
 ```
 
 > `PG_DB_PASS` and `PG_ADMIN_TOKEN` are **required** — `docker compose up` fails fast if either is unset in `.env`.
+> Production also requires a non-empty, explicit `PG_ADMIN_ALLOWED_ORIGINS` list;
+> wildcard `*` is rejected. Metrics share the API listener at `/metrics`; do not
+> publish a separate `9099` port.
 
 ---
 

@@ -14,7 +14,8 @@ Provide comprehensive observability with Prometheus metrics on `/metrics`, reque
    - `pg_request_duration_seconds`: Histogram (labels: `path`, `model`).
    - `pg_tokens_total`: Counter (labels: `key_id`, `model`, `type`).
    - `pg_upstream_errors_total`: Counter (labels: `provider`, `code`).
-   - `GET /metrics`: Standard Prometheus scrapable text format endpoint.
+   - `GET /metrics`: Standard Prometheus scrape endpoint on the shared API
+     listener (`:8088`); there is no separate metrics port.
 2. **Audit Event Logging (`internal/audit`)**:
    - Event types: `AUTH_SUCCESS`, `AUTH_FAILURE`, `POLICY_DENY`, `RATE_LIMITED`, `ROUTE_RESOLVED`, `CONFIG_CHANGED`.
    - Structural record: `ID`, `Timestamp`, `Actor`, `EventType`, `Target`, `Status`, `Metadata`.

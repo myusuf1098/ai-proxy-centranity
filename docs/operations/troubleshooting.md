@@ -12,6 +12,8 @@
 | **Redis Rate Limiter Errors** | Redis down or out of memory | `docker exec proxygateway-redis redis-cli PING` | Check Redis AOF log and memory consumption. |
 | **Compose fails with `PG_DB_PASS` / `PG_ADMIN_TOKEN` variable not set** | Missing required secret in `.env` | `grep -E 'PG_DB_PASS|PG_ADMIN_TOKEN' .env` | Set both in `.env` (`chmod 600 .env`) and re-run `docker compose up -d`. |
 | `/api/v1/*` returns 401 | `PG_ADMIN_TOKEN` not set or mismatch | Set `PG_ADMIN_TOKEN` in `.env`; Management API fails closed |
+| `:9099` is closed after deployment | Expected: metrics share the API listener | `curl -s http://127.0.0.1:8088/metrics` | Scrape `/metrics` on `:8088`; remove legacy `PG_METRICS_PORT` configuration. |
+| API refuses to start in production with an origin error | CORS list is empty or contains wildcard `*` | Check `PG_ADMIN_ALLOWED_ORIGINS` without printing secrets | Configure explicit HTTPS origins, comma-separated, then recreate `proxygateway-api`. |
 
 ---
 

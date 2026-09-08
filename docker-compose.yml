@@ -56,18 +56,16 @@ services:
       start_period: 10s
     environment:
       - PG_SERVER_PORT=8088
-      - PG_METRICS_PORT=9099
       - PG_ENV=production
       - PG_DATABASE_URL=postgres://${PG_DB_USER:-proxygateway}:${PG_DB_PASS:?set PG_DB_PASS in .env}@postgres:5432/${PG_DB_NAME:-proxygateway}?sslmode=disable
       - PG_REDIS_URL=redis://redis:6379/0
       - PG_NINEROUTER_URL=${PG_NINEROUTER_URL:-http://ninerouter:20128}
       - PG_ADMIN_TOKEN=${PG_ADMIN_TOKEN:?set PG_ADMIN_TOKEN in .env}
-      - PG_ADMIN_ALLOWED_ORIGINS=${PG_ADMIN_ALLOWED_ORIGINS:-*}
+      - PG_ADMIN_ALLOWED_ORIGINS=${PG_ADMIN_ALLOWED_ORIGINS:-https://portal.centranity.com,https://monitor.centranity.com}
       - PG_GLOBAL_DENY_MODELS=${PG_GLOBAL_DENY_MODELS:-}
       - PG_GLOBAL_DENY_PROVIDERS=${PG_GLOBAL_DENY_PROVIDERS:-}
     ports:
-      - "8088:8088"
-      - "9099:9099"
+      - "127.0.0.1:8088:8088"
     networks:
       - frontend
       - backend
