@@ -11,7 +11,6 @@ import (
 // ServerConfig holds HTTP server configuration
 type ServerConfig struct {
 	Port            int           `json:"port"`
-	MetricsPort     int           `json:"metrics_port"`
 	Env             string        `json:"env"`
 	ReadTimeout     time.Duration `json:"read_timeout"`
 	WriteTimeout    time.Duration `json:"write_timeout"`
@@ -60,7 +59,6 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
 			Port:            getEnvInt("PG_SERVER_PORT", 8088),
-			MetricsPort:     getEnvInt("PG_METRICS_PORT", 9099),
 			Env:             getEnvString("PG_ENV", "development"),
 			ReadTimeout:     getEnvDuration("PG_READ_TIMEOUT", 30*time.Second),
 			WriteTimeout:    getEnvDuration("PG_WRITE_TIMEOUT", 60*time.Second),
@@ -84,7 +82,7 @@ func Load() (*Config, error) {
 		},
 		Admin: AdminConfig{
 			ManagementToken: getEnvString("PG_ADMIN_TOKEN", ""),
-			AllowedOrigins:  GetEnvSlice("PG_ADMIN_ALLOWED_ORIGINS", []string{"*"}),
+			AllowedOrigins:  GetEnvSlice("PG_ADMIN_ALLOWED_ORIGINS", nil),
 		},
 	}
 
@@ -100,14 +98,18 @@ func (c *Config) Validate() error {
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("invalid server port: %d (must be 1-65535)", c.Server.Port)
 	}
-	if c.Server.MetricsPort <= 0 || c.Server.MetricsPort > 65535 {
-		return fmt.Errorf("invalid metrics port: %d (must be 1-65535)", c.Server.MetricsPort)
-	}
-	if c.Server.Port == c.Server.MetricsPort {
-		return fmt.Errorf("server port and metrics port cannot be identical (%d)", c.Server.Port)
-	}
 	if c.NineRouter.BaseURL == "" {
 		return fmt.Errorf("ninerouter base URL cannot be empty")
+	}
+	if strings.EqualFold(c.Server.Env, "production") {
+		if len(c.Admin.AllowedOrigins) == 0 {
+			return fmt.Errorf("PG_ADMIN_ALLOWED_ORIGINS is required in production")
+		}
+		for _, origin := range c.Admin.AllowedOrigins {
+			if origin == "*" {
+				return fmt.Errorf("wildcard CORS origin is not allowed in production")
+			}
+		}
 	}
 	return nil
 }

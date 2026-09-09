@@ -142,8 +142,8 @@ unless there is a documented reason to expose them.
 
 Ports:
 
--   `8088` API
--   `9099` metrics
+-   `8088` API, health, and `/metrics` (host bind defaults to
+    `127.0.0.1:8088`)
 
 ### proxygateway-tui
 

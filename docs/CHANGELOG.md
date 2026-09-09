@@ -61,6 +61,13 @@ All phases delivered 2026-08-14 via isolated `feat/phase-N-*` branches â†’ PR â†
 
 ## Unreleased / Working Tree
 
+### Post-restore Network Hardening (2026-09-08)
+- Removed the unused `PG_METRICS_PORT` contract and host `:9099` mapping;
+  Prometheus remains available at `/metrics` on the API listener `:8088`.
+- Bound the API host port to `127.0.0.1:8088` for reverse-proxy-only access.
+- Production now requires explicit CORS origins and rejects empty or wildcard
+  origin lists.
+
 ### Docker Hardening
 - `docker-compose.yml`: remove deprecated `version:`; `backend` network now `internal: true`; `mem_limit` on postgres (1g), redis (256m), api (512m); secrets `PG_DB_PASS`/`PG_ADMIN_TOKEN` now required (`${VAR:?}` fails fast); compose-level healthcheck on `proxygateway-api`.
 - `.env.example`: mark `PG_DB_PASS`/`PG_ADMIN_TOKEN` REQUIRED.
